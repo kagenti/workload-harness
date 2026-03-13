@@ -3,8 +3,9 @@
 Tests URL normalization and response extraction without making network calls.
 """
 
+from unittest.mock import patch
+
 import pytest
-from unittest.mock import patch, MagicMock
 
 from appworld_a2a_runner.a2a_client import A2AProxyClient
 from appworld_a2a_runner.config import A2AConfig

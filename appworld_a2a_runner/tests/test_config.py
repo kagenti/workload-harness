@@ -1,7 +1,5 @@
 """Tests for configuration management."""
 
-import os
-
 import pytest
 
 from appworld_a2a_runner.config import (
