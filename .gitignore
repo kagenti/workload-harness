@@ -1,0 +1,25 @@
+# Secrets and credentials
+.env
+.env.*
+.env.local
+*.key
+*.pem
+*.p12
+*.jks
+credentials.*
+secrets.*
+*kubeconfig*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Ruff cache
+.ruff_cache/

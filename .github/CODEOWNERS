@@ -1,0 +1,12 @@
+# Default owners for everything
+* @kagenti/maintainers
+
+# CI and platform configuration
+.github/ @kagenti/admins
+Makefile @kagenti/admins
+
+# Documentation
+*.md @kagenti/maintainers
+
+# Main harness code
+appworld_a2a_runner @kellya
