@@ -31,3 +31,6 @@ include = ["appworld_a2a_runner*"]
 
 [project.scripts]
 appworld-a2a-runner = "appworld_a2a_runner.runner:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
