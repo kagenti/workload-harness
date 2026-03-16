@@ -52,3 +52,22 @@ git commit -s -m "feat: add new feature"
 Use `Assisted-By` for AI attribution (not `Co-Authored-By`):
 
     Assisted-By: Claude (Anthropic AI) <noreply@anthropic.com>
+
+## Orchestration
+
+This repo includes orchestrate skills for enhancing related repos:
+
+| Skill | Description |
+|-------|-------------|
+| `orchestrate` | Run `/orchestrate <repo-url>` to start |
+| `orchestrate:scan` | Assess repo structure and gaps |
+| `orchestrate:plan` | Create phased enhancement plan |
+| `orchestrate:precommit` | Add pre-commit hooks and linting |
+| `orchestrate:tests` | Add test infrastructure and coverage |
+| `orchestrate:ci` | Add CI workflows and security scanning |
+| `orchestrate:security` | Add governance files |
+| `orchestrate:review` | Review orchestration PRs before merge |
+| `orchestrate:replicate` | Bootstrap skills into target repo |
+| `skills:scan` | Discover and audit skills |
+| `skills:write` | Author new skills |
+| `skills:validate` | Validate skill format |
