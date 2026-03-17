@@ -1,0 +1,365 @@
+"""Main runner for Exgentic A2A Runner.
+
+Orchestrates session creation, A2A calls, evaluation, and telemetry collection.
+"""
+
+import argparse
+import logging
+import sys
+import time
+from typing import List, Optional
+
+from .a2a_client import A2AProxyClient
+from .config import Config
+from .exgentic_adapter import ExgenticAdapter, SessionData
+from .otel import OTELInstrumentation
+from .prompt import build_prompt
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+# Suppress verbose logs from third-party libraries
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.getLogger("mcp.client.streamable_http").setLevel(logging.INFO)
+
+
+class SessionResult:
+    """Result of a single session execution."""
+
+    def __init__(
+        self,
+        session_id: str,
+        success: bool,
+        latency_ms: float,
+        evaluation_result: bool,
+        error: Optional[str] = None,
+        response_chars: Optional[int] = None,
+    ):
+        self.session_id = session_id
+        self.success = success
+        self.latency_ms = latency_ms
+        self.evaluation_result = evaluation_result
+        self.error = error
+        self.response_chars = response_chars
+
+
+class RunSummary:
+    """Summary of the entire run."""
+
+    def __init__(self):
+        self.start_time = time.time()
+        self.results: List[SessionResult] = []
+
+    def add_result(self, result: SessionResult) -> None:
+        """Add a session result."""
+        self.results.append(result)
+
+    def get_summary(self) -> dict:
+        """Get summary statistics."""
+        total_time = time.time() - self.start_time
+        attempted = len(self.results)
+        succeeded = sum(1 for r in self.results if r.success)
+        failed = attempted - succeeded
+        
+        # Calculate evaluation success rate
+        evaluated = sum(1 for r in self.results if r.success)
+        eval_succeeded = sum(1 for r in self.results if r.success and r.evaluation_result)
+        eval_success_rate = (eval_succeeded / evaluated * 100) if evaluated > 0 else 0
+
+        latencies = [r.latency_ms for r in self.results]
+        avg_latency = sum(latencies) / len(latencies) if latencies else 0
+
+        # Calculate percentiles
+        sorted_latencies = sorted(latencies)
+        p50 = sorted_latencies[len(sorted_latencies) // 2] if sorted_latencies else 0
+        p95_idx = min(int(len(sorted_latencies) * 0.95), len(sorted_latencies) - 1)
+        p95 = sorted_latencies[p95_idx] if sorted_latencies else 0
+
+        return {
+            "sessions_attempted": attempted,
+            "sessions_succeeded": succeeded,
+            "sessions_failed": failed,
+            "evaluation_success_rate": eval_success_rate,
+            "total_wall_time_seconds": total_time,
+            "average_latency_ms": avg_latency,
+            "p50_latency_ms": p50,
+            "p95_latency_ms": p95,
+        }
+
+    def print_summary(self) -> None:
+        """Print summary to console."""
+        summary = self.get_summary()
+
+        print("\n" + "=" * 60)
+        print("RUN SUMMARY")
+        print("=" * 60)
+        print(f"Sessions Attempted:   {summary['sessions_attempted']}")
+        print(f"Sessions Succeeded:   {summary['sessions_succeeded']}")
+        print(f"Sessions Failed:      {summary['sessions_failed']}")
+        print(f"Evaluation Success:   {summary['evaluation_success_rate']:.1f}%")
+        print(f"Total Wall Time:      {summary['total_wall_time_seconds']:.2f}s")
+        print(f"Average Latency:      {summary['average_latency_ms']:.2f}ms")
+        print(f"P50 Latency:          {summary['p50_latency_ms']:.2f}ms")
+        print(f"P95 Latency:          {summary['p95_latency_ms']:.2f}ms")
+        print("=" * 60 + "\n")
+
+
+class Runner:
+    """Main runner orchestrating session execution."""
+
+    def __init__(self, config: Config):
+        """Initialize runner.
+
+        Args:
+            config: Complete configuration
+        """
+        self.config = config
+        self.exgentic = ExgenticAdapter(config.exgentic)
+        self.a2a_client = A2AProxyClient(config.a2a)
+        self.otel = OTELInstrumentation(config.otel)
+        self.summary = RunSummary()
+
+    def initialize(self) -> None:
+        """Initialize all components."""
+        logger.info("Initializing runner components")
+        self.otel.initialize()
+        self.exgentic.initialize()
+        logger.info("Runner initialization complete")
+
+    def process_session(self, session_data: SessionData) -> SessionResult:
+        """Process a single session.
+
+        Follows the execution model from GitHub issue #963:
+        1. Create session (already done)
+        2. Build prompt with session_id
+        3. Send to agent via A2A
+        4. Evaluate session
+        5. Close session
+        6. Record statistics
+
+        Args:
+            session_data: Session data from Exgentic
+
+        Returns:
+            SessionResult with execution details
+        """
+        session_id = session_data.session_id
+        start_time = time.time()
+
+        logger.info(f"Processing session: {session_id}")
+
+        # Start OTEL span
+        with self.otel.session_span(
+            session_id=session_id,
+            mcp_server_url=self.config.exgentic.mcp_server_url,
+            a2a_base_url=self.config.a2a.base_url,
+            a2a_timeout=self.config.a2a.timeout_seconds,
+        ) as span:
+            try:
+                # Build prompt with session_id
+                with self.otel.child_span("exgentic_a2a.prompt.build"):
+                    prompt = build_prompt(session_data.task, session_data.session_id)
+                self.otel.record_prompt(span, prompt)
+
+                if self.config.debug.log_prompt:
+                    logger.debug(f"Prompt length: {len(prompt)} chars")
+
+                # Send A2A request
+                a2a_start = time.time()
+                with self.otel.child_span("exgentic_a2a.a2a.send_prompt"):
+                    response = self.a2a_client.send_prompt(prompt)
+                a2a_duration_ms = (time.time() - a2a_start) * 1000
+
+                self.otel.record_a2a_request(span, a2a_duration_ms)
+                self.otel.record_response(span, response)
+
+                if self.config.debug.log_response:
+                    logger.debug(f"Response length: {len(response)} chars")
+
+                # Evaluate session
+                eval_start = time.time()
+                with self.otel.child_span("exgentic_a2a.mcp.evaluate_session"):
+                    evaluation_result = self.exgentic.evaluate_session(session_id)
+                eval_duration_ms = (time.time() - eval_start) * 1000
+                self.otel.record_evaluation(span, eval_duration_ms)
+
+                # Close session
+                with self.otel.child_span("exgentic_a2a.mcp.close_session"):
+                    self.exgentic.close_session(session_id)
+
+                # Record success
+                self.otel.record_success(span, evaluation_result)
+
+                latency_ms = (time.time() - start_time) * 1000
+                logger.info(
+                    f"Session {session_id} completed in {latency_ms:.2f}ms "
+                    f"(evaluation: {'success' if evaluation_result else 'failed'})"
+                )
+
+                return SessionResult(
+                    session_id=session_id,
+                    success=True,
+                    latency_ms=latency_ms,
+                    evaluation_result=evaluation_result,
+                    response_chars=len(response),
+                )
+
+            except Exception as e:
+                # Classify error type
+                error_type = type(e).__name__
+                error_msg = str(e)
+
+                logger.error(f"Session {session_id} failed: {error_type}: {error_msg}")
+
+                # Try to close session even on failure
+                try:
+                    with self.otel.child_span("exgentic_a2a.mcp.close_session"):
+                        self.exgentic.close_session(session_id)
+                except Exception as close_error:
+                    logger.warning(f"Failed to close session {session_id}: {close_error}")
+
+                # Record failure
+                self.otel.record_failure(span, e, error_type)
+
+                latency_ms = (time.time() - start_time) * 1000
+
+                return SessionResult(
+                    session_id=session_id,
+                    success=False,
+                    latency_ms=latency_ms,
+                    evaluation_result=False,
+                    error=f"{error_type}: {error_msg}",
+                )
+
+    def run(self) -> int:
+        """Run the session processing loop.
+
+        Returns:
+            Exit code (0 for success, 1 for failure)
+        """
+        try:
+            self.initialize()
+
+            # Process sessions sequentially
+            for session_data in self.exgentic.iterate_sessions():
+                # Record session creation time
+                creation_time_ms = (time.time() - session_data.created_at) * 1000
+                # Note: We can't easily add this to a span since it's created before the span
+                # but we can log it
+                logger.debug(f"Session creation took {creation_time_ms:.2f}ms")
+
+                result = self.process_session(session_data)
+                self.summary.add_result(result)
+
+                # Check abort on failure
+                if not result.success and self.config.exgentic.abort_on_failure:
+                    logger.error("Aborting due to session failure (ABORT_ON_FAILURE=true)")
+                    break
+
+            # Print summary
+            self.summary.print_summary()
+
+            # Return success if at least one session succeeded
+            if any(r.success for r in self.summary.results):
+                return 0
+            else:
+                return 1
+
+        except Exception as e:
+            logger.exception(f"Fatal error in runner: {e}")
+            return 1
+        finally:
+            # Shutdown components
+            try:
+                self.exgentic.shutdown()
+            except Exception as e:
+                logger.warning(f"Error shutting down Exgentic adapter: {e}")
+            
+            self.otel.shutdown()
+
+
+def parse_args() -> argparse.Namespace:
+    """Parse command line arguments.
+
+    Returns:
+        Parsed arguments
+    """
+    parser = argparse.ArgumentParser(
+        description="Exgentic A2A Runner",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Environment Variables:
+  EXGENTIC_MCP_SERVER_URL   MCP server endpoint (required)
+  EXGENTIC_MCP_TIMEOUT_SECONDS  MCP timeout in seconds (default: 60)
+  MAX_TASKS                 Maximum number of sessions to process
+  ABORT_ON_FAILURE          Stop on first failure (default: false)
+
+  A2A_BASE_URL              A2A endpoint base URL (required)
+  A2A_TIMEOUT_SECONDS       Request timeout in seconds (default: 300)
+  A2A_AUTH_TOKEN            Bearer token for authentication
+  A2A_VERIFY_TLS            Verify TLS certificates (default: true)
+  A2A_ENDPOINT_PATH         Endpoint path (default: /v1/chat)
+
+  OTEL_SERVICE_NAME         Service name for telemetry (default: exgentic-a2a-runner)
+  OTEL_EXPORTER_OTLP_ENDPOINT  OTLP exporter endpoint
+  OTEL_EXPORTER_OTLP_PROTOCOL  OTLP protocol (default: grpc)
+  OTEL_RESOURCE_ATTRIBUTES  Additional resource attributes
+  OTEL_EXPORTER_OTLP_INSECURE  Use insecure connection for OTLP (default: true)
+
+  LOG_PROMPT                Log prompt details (default: 0)
+  LOG_RESPONSE              Log response details (default: 0)
+        """,
+    )
+
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Enable verbose logging",
+    )
+
+    return parser.parse_args()
+
+
+def main() -> int:
+    """Main entry point.
+
+    Returns:
+        Exit code
+    """
+    args = parse_args()
+
+    # Set log level
+    if args.verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
+
+    try:
+        # Load configuration from environment
+        config = Config.from_env()
+
+        # Create and run
+        runner = Runner(config)
+        return runner.run()
+
+    except ValueError as e:
+        logger.error(f"Configuration error: {e}")
+        return 1
+    except KeyboardInterrupt:
+        logger.info("Interrupted by user")
+        return 130
+    except Exception as e:
+        logger.exception(f"Unexpected error: {e}")
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+
+
+# Made with Bob
