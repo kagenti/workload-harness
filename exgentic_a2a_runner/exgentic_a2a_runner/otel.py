@@ -266,6 +266,7 @@ class OTELInstrumentation:
         """
         prompt_chars = len(prompt)
         span.set_attribute("prompt.chars", prompt_chars)
+        span.set_attribute("prompt.text", prompt)
         span.add_event("prompt_built")
 
         if self.prompt_size_histogram:
@@ -296,6 +297,7 @@ class OTELInstrumentation:
         """
         response_chars = len(response)
         span.set_attribute("response.chars", response_chars)
+        span.set_attribute("response.text", response)
 
         if self.response_size_histogram:
             self.response_size_histogram.record(response_chars)

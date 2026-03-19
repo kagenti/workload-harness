@@ -105,7 +105,7 @@ class ExgenticAdapter:
         try:
             result = self.mcp_client.evaluate_session(session_id)
             success = result.get("success", False)
-            logger.info(f"Session {session_id} evaluation: {'success' if success else 'failed'}")
+            logger.info(f"Session {session_id} evaluation: {'success' if success else 'failed'} {result}")
             return success
 
         except Exception as e:
