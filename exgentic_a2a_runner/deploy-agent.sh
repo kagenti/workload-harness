@@ -17,7 +17,7 @@ if [ -z "$BENCHMARK_NAME" ]; then
 fi
 
 AGENT_NAME="generic-agent-internal-${BENCHMARK_NAME}"
-TOOL_NAME="exgentic-mcp-${BENCHMARK_NAME}-mcp"
+TOOL_NAME="exgentic-mcp-${BENCHMARK_NAME}"
 NAMESPACE="team1"
 KAGENTI_API="http://localhost:8001"
 KAGENTI_PORT=8001

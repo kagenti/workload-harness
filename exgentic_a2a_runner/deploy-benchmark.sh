@@ -17,7 +17,7 @@ if [ -z "$BENCHMARK_NAME" ]; then
 fi
 
 IMAGE_NAME="localhost/exgentic-mcp-${BENCHMARK_NAME}:latest"
-TOOL_NAME="exgentic-mcp-${BENCHMARK_NAME}-mcp"
+TOOL_NAME="exgentic-mcp-${BENCHMARK_NAME}"
 NAMESPACE="team1"
 KAGENTI_API="http://localhost:8001"  # Using 8001 to avoid conflict with MCP server on 8000
 KAGENTI_PORT=8001
