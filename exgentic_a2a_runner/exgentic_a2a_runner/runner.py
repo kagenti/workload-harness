@@ -116,7 +116,23 @@ class RunSummary:
         print(f"Average Latency:      {summary['average_latency_ms']:.2f}ms")
         print(f"P50 Latency:          {summary['p50_latency_ms']:.2f}ms")
         print(f"P95 Latency:          {summary['p95_latency_ms']:.2f}ms")
-        print("=" * 60 + "\n")
+        print("=" * 60)
+        
+        # Print error table if there are any failures
+        failed_results = [r for r in self.results if not r.success and r.error]
+        if failed_results:
+            print("\nFAILED SESSIONS")
+            print("=" * 60)
+            print(f"{'Session ID':<40} {'Error':<20}")
+            print("-" * 60)
+            for result in failed_results:
+                # Truncate error message if too long
+                error = result.error or "Unknown error"
+                error_msg = error[:100] + "..." if len(error) > 100 else error
+                print(f"{result.session_id:<40} {error_msg:<20}")
+            print("=" * 60)
+        
+        print()
 
 
 class Runner:
