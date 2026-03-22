@@ -6,7 +6,9 @@ Orchestrates session creation, A2A calls, evaluation, and telemetry collection.
 import argparse
 import logging
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Optional
 
 from .a2a_client import A2AProxyClient
@@ -55,10 +57,12 @@ class RunSummary:
     def __init__(self):
         self.start_time = time.time()
         self.results: List[SessionResult] = []
+        self._lock = threading.Lock()
 
     def add_result(self, result: SessionResult) -> None:
-        """Add a session result."""
-        self.results.append(result)
+        """Add a session result (thread-safe)."""
+        with self._lock:
+            self.results.append(result)
 
     def get_summary(self) -> dict:
         """Get summary statistics."""
@@ -92,13 +96,18 @@ class RunSummary:
             "p95_latency_ms": p95,
         }
 
-    def print_summary(self) -> None:
-        """Print summary to console."""
+    def print_summary(self, max_parallel_sessions: int = 1) -> None:
+        """Print summary to console.
+        
+        Args:
+            max_parallel_sessions: Maximum number of parallel sessions configured
+        """
         summary = self.get_summary()
 
         print("\n" + "=" * 60)
         print("RUN SUMMARY")
         print("=" * 60)
+        print(f"Max Parallel Sessions: {max_parallel_sessions}")
         print(f"Sessions Attempted:   {summary['sessions_attempted']}")
         print(f"Sessions Succeeded:   {summary['sessions_succeeded']}")
         print(f"Sessions Failed:      {summary['sessions_failed']}")
@@ -124,6 +133,7 @@ class Runner:
         self.a2a_client = A2AProxyClient(config.a2a)
         self.otel = OTELInstrumentation(config.otel)
         self.summary = RunSummary()
+        self.max_parallel_sessions = config.exgentic.max_parallel_sessions
 
     def initialize(self) -> None:
         """Initialize all components."""
@@ -251,24 +261,66 @@ class Runner:
             task_ids = self.exgentic.get_task_ids()
             logger.info(f"Found {len(task_ids)} tasks to process")
 
-            # Process sessions sequentially
-            for session_data in self.exgentic.iterate_sessions(task_ids):
-                # Record session creation time
-                creation_time_ms = (time.time() - session_data.created_at) * 1000
-                # Note: We can't easily add this to a span since it's created before the span
-                # but we can log it
-                logger.debug(f"Session creation took {creation_time_ms:.2f}ms")
-                
-                result = self.process_session(session_data)
-                self.summary.add_result(result)
+            max_workers = self.config.exgentic.max_parallel_sessions
+            
+            if max_workers == 1:
+                # Sequential processing (original behavior)
+                logger.info("Processing sessions sequentially")
+                for session_data in self.exgentic.iterate_sessions(task_ids):
+                    # Record session creation time
+                    creation_time_ms = (time.time() - session_data.created_at) * 1000
+                    logger.debug(f"Session creation took {creation_time_ms:.2f}ms")
+                    
+                    result = self.process_session(session_data)
+                    self.summary.add_result(result)
 
-                # Check abort on failure
-                if not result.success and self.config.exgentic.abort_on_failure:
-                    logger.error("Aborting due to session failure (ABORT_ON_FAILURE=true)")
-                    break
+                    # Check abort on failure
+                    if not result.success and self.config.exgentic.abort_on_failure:
+                        logger.error("Aborting due to session failure (ABORT_ON_FAILURE=true)")
+                        break
+            else:
+                # Parallel processing
+                logger.info(f"Processing sessions in parallel with {max_workers} workers")
+                
+                # Collect all session data first
+                sessions = list(self.exgentic.iterate_sessions(task_ids))
+                
+                # Process sessions in parallel
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    # Submit all sessions
+                    future_to_session = {
+                        executor.submit(self.process_session, session_data): session_data
+                        for session_data in sessions
+                    }
+                    
+                    # Process results as they complete
+                    for future in as_completed(future_to_session):
+                        session_data = future_to_session[future]
+                        try:
+                            result = future.result()
+                            self.summary.add_result(result)
+                            
+                            # Check abort on failure
+                            if not result.success and self.config.exgentic.abort_on_failure:
+                                logger.error("Aborting due to session failure (ABORT_ON_FAILURE=true)")
+                                # Cancel remaining futures
+                                for f in future_to_session:
+                                    f.cancel()
+                                break
+                        except Exception as e:
+                            logger.error(f"Session {session_data.session_id} raised exception: {e}")
+                            # Create a failure result
+                            result = SessionResult(
+                                session_id=session_data.session_id,
+                                success=False,
+                                latency_ms=0,
+                                evaluation_result=False,
+                                error=str(e),
+                            )
+                            self.summary.add_result(result)
 
             # Print summary
-            self.summary.print_summary()
+            self.summary.print_summary(max_parallel_sessions=self.max_parallel_sessions)
 
             # Return success if at least one session succeeded
             if any(r.success for r in self.summary.results):

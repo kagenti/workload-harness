@@ -37,6 +37,7 @@ class ExgenticConfig:
     mcp_timeout_seconds: int = 60
     max_tasks: Optional[int] = None
     abort_on_failure: bool = False
+    max_parallel_sessions: int = 1
 
     @classmethod
     def from_env(cls) -> "ExgenticConfig":
@@ -50,6 +51,7 @@ class ExgenticConfig:
             mcp_timeout_seconds=_get_int("EXGENTIC_MCP_TIMEOUT_SECONDS", 60) or 60,
             max_tasks=_get_int("MAX_TASKS"),
             abort_on_failure=_get_bool("ABORT_ON_FAILURE", False),
+            max_parallel_sessions=_get_int("MAX_PARALLEL_SESSIONS", 1) or 1,
         )
 
 
