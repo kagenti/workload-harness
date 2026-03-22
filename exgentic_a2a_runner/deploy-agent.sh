@@ -42,8 +42,42 @@ fi
 
 echo ""
 
-# Step 2: Get Keycloak authentication token
-echo "Step 2: Getting Keycloak authentication token..."
+# Step 2: Enable Direct Access Grants for kagenti client if needed
+echo "Step 2: Checking Keycloak client configuration..."
+
+# Get admin token first
+ADMIN_TOKEN_RESPONSE=$(curl -s -X POST "$KEYCLOAK_API/realms/master/protocol/openid-connect/token" \
+    -H "Content-Type: application/x-www-form-urlencoded" \
+    -d "username=$KEYCLOAK_USERNAME" \
+    -d "password=$KEYCLOAK_PASSWORD" \
+    -d "grant_type=password" \
+    -d "client_id=admin-cli" 2>/dev/null || echo "TOKEN_ERROR")
+
+if [ "$ADMIN_TOKEN_RESPONSE" != "TOKEN_ERROR" ]; then
+    ADMIN_TOKEN=$(echo "$ADMIN_TOKEN_RESPONSE" | grep -o '"access_token":"[^"]*"' | sed 's/"access_token":"\([^"]*\)"/\1/')
+    
+    if [ -n "$ADMIN_TOKEN" ]; then
+        # Get kagenti client configuration
+        CLIENT_CONFIG=$(curl -s "$KEYCLOAK_API/admin/realms/kagenti/clients?clientId=kagenti" \
+            -H "Authorization: Bearer $ADMIN_TOKEN" 2>/dev/null)
+        
+        CLIENT_ID=$(echo "$CLIENT_CONFIG" | grep -o '"id":"[^"]*"' | head -1 | sed 's/"id":"\([^"]*\)"/\1/')
+        
+        if [ -n "$CLIENT_ID" ]; then
+            # Enable direct access grants
+            curl -s -X PUT "$KEYCLOAK_API/admin/realms/kagenti/clients/$CLIENT_ID" \
+                -H "Authorization: Bearer $ADMIN_TOKEN" \
+                -H "Content-Type: application/json" \
+                -d '{"directAccessGrantsEnabled": true}' >/dev/null 2>&1
+            echo "✓ Direct access grants enabled for kagenti client"
+        fi
+    fi
+fi
+
+echo ""
+
+# Step 3: Get Keycloak authentication token
+echo "Step 3: Getting Keycloak authentication token..."
 TOKEN_RESPONSE=$(curl -s -X POST "$KEYCLOAK_API/realms/kagenti/protocol/openid-connect/token" \
     -H "Content-Type: application/x-www-form-urlencoded" \
     -d "username=$KEYCLOAK_USERNAME" \
@@ -60,6 +94,10 @@ ACCESS_TOKEN=$(echo "$TOKEN_RESPONSE" | grep -o '"access_token":"[^"]*"' | sed '
 
 if [ -z "$ACCESS_TOKEN" ]; then
     echo "Error: Failed to extract access token"
+    echo "Response: $TOKEN_RESPONSE"
+    echo ""
+    echo "If you see 'unauthorized_client' error, the kagenti client may need Direct Access Grants enabled."
+    echo "You can enable it manually in Keycloak admin console or run this script again."
     exit 1
 fi
 
@@ -67,8 +105,8 @@ echo "✓ Successfully obtained authentication token"
 
 echo ""
 
-# Step 3: Set up port-forward to Kagenti backend
-echo "Step 3: Setting up port-forward to Kagenti backend..."
+# Step 4: Set up port-forward to Kagenti backend
+echo "Step 4: Setting up port-forward to Kagenti backend..."
 if lsof -Pi :$KAGENTI_PORT -sTCP:LISTEN -t >/dev/null 2>&1; then
     echo "✓ Port $KAGENTI_PORT is already in use (assuming Kagenti backend is accessible)"
 else
@@ -80,8 +118,8 @@ fi
 
 echo ""
 
-# Step 4: Delete existing agent if it exists
-echo "Step 4: Deleting existing agent via Kagenti API if it exists..."
+# Step 5: Delete existing agent if it exists
+echo "Step 5: Deleting existing agent via Kagenti API if it exists..."
 DELETE_RESPONSE=$(curl -s -w "%{http_code}" -o /tmp/kagenti_delete_agent_response.txt -X DELETE "$KAGENTI_API/api/v1/agents/$NAMESPACE/$AGENT_NAME" \
     -H "Authorization: Bearer $ACCESS_TOKEN")
 
@@ -95,8 +133,8 @@ sleep 3
 
 echo ""
 
-# Step 5: Fetch and parse environment variables
-echo "Step 5: Fetching environment variables..."
+# Step 6: Fetch and parse environment variables
+echo "Step 6: Fetching environment variables..."
 ENV_CONTENT=$(curl -s https://raw.githubusercontent.com/kagenti/agent-examples/refs/heads/main/a2a/generic_agent/.env.openai)
 
 # Parse env vars using the Kagenti API
@@ -111,8 +149,8 @@ echo "✓ Environment variables parsed"
 
 echo ""
 
-# Step 6: Deploy agent via Kagenti API
-echo "Step 6: Deploying agent via Kagenti API..."
+# Step 7: Deploy agent via Kagenti API
+echo "Step 7: Deploying agent via Kagenti API..."
 
 # Add MCP_URLS to environment variables
 MCP_URL="http://${TOOL_NAME}-mcp:8000/mcp"
@@ -172,8 +210,8 @@ fi
 
 echo ""
 
-# Step 7: Wait for build to complete
-echo "Step 7: Waiting for build to complete..."
+# Step 8: Wait for build to complete
+echo "Step 8: Waiting for build to complete..."
 BUILD_RUN_NAME=$(echo "$RESPONSE" | jq -r '.message' | grep -o "BuildRun: '[^']*'" | sed "s/BuildRun: '\([^']*\)'/\1/")
 
 if [ -z "$BUILD_RUN_NAME" ]; then
@@ -209,8 +247,8 @@ fi
 
 echo ""
 
-# Step 8: Wait for agent deployment to be created and ready
-echo "Step 8: Waiting for agent deployment to be created..."
+# Step 9: Wait for agent deployment to be created and ready
+echo "Step 9: Waiting for agent deployment to be created..."
 
 # Wait for deployment to be created (up to 2 minutes)
 for i in {1..24}; do
@@ -239,8 +277,8 @@ fi
 echo "✓ Agent deployment is ready"
 echo ""
 
-# Step 9: Test agent card access
-echo "Step 9: Testing agent card access..."
+# Step 10: Test agent card access
+echo "Step 10: Testing agent card access..."
 
 # Set up port-forward to agent
 AGENT_PORT=8084

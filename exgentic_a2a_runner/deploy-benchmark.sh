@@ -128,8 +128,42 @@ fi
 
 echo ""
 
-# Step 4: Get Keycloak authentication token...
-echo "Step 4: Getting Keycloak authentication token..."
+# Step 4: Enable Direct Access Grants for kagenti client if needed
+echo "Step 4: Checking Keycloak client configuration..."
+
+# Get admin token first
+ADMIN_TOKEN_RESPONSE=$(curl -s -X POST "$KEYCLOAK_API/realms/master/protocol/openid-connect/token" \
+    -H "Content-Type: application/x-www-form-urlencoded" \
+    -d "username=$KEYCLOAK_USERNAME" \
+    -d "password=$KEYCLOAK_PASSWORD" \
+    -d "grant_type=password" \
+    -d "client_id=admin-cli" 2>/dev/null || echo "TOKEN_ERROR")
+
+if [ "$ADMIN_TOKEN_RESPONSE" != "TOKEN_ERROR" ]; then
+    ADMIN_TOKEN=$(echo "$ADMIN_TOKEN_RESPONSE" | grep -o '"access_token":"[^"]*"' | sed 's/"access_token":"\([^"]*\)"/\1/')
+    
+    if [ -n "$ADMIN_TOKEN" ]; then
+        # Get kagenti client configuration
+        CLIENT_CONFIG=$(curl -s "$KEYCLOAK_API/admin/realms/kagenti/clients?clientId=kagenti" \
+            -H "Authorization: Bearer $ADMIN_TOKEN" 2>/dev/null)
+        
+        CLIENT_ID=$(echo "$CLIENT_CONFIG" | grep -o '"id":"[^"]*"' | head -1 | sed 's/"id":"\([^"]*\)"/\1/')
+        
+        if [ -n "$CLIENT_ID" ]; then
+            # Enable direct access grants
+            curl -s -X PUT "$KEYCLOAK_API/admin/realms/kagenti/clients/$CLIENT_ID" \
+                -H "Authorization: Bearer $ADMIN_TOKEN" \
+                -H "Content-Type: application/json" \
+                -d '{"directAccessGrantsEnabled": true}' >/dev/null 2>&1
+            echo "✓ Direct access grants enabled for kagenti client"
+        fi
+    fi
+fi
+
+echo ""
+
+# Step 5: Get Keycloak authentication token...
+echo "Step 5: Getting Keycloak authentication token..."
 
 # Get token from Keycloak using kagenti client (with direct access grants enabled)
 TOKEN_RESPONSE=$(curl -s -X POST "$KEYCLOAK_API/realms/kagenti/protocol/openid-connect/token" \
@@ -150,6 +184,9 @@ ACCESS_TOKEN=$(echo "$TOKEN_RESPONSE" | grep -o '"access_token":"[^"]*"' | sed '
 if [ -z "$ACCESS_TOKEN" ]; then
     echo "Error: Failed to extract access token from Keycloak response"
     echo "Response: $TOKEN_RESPONSE"
+    echo ""
+    echo "If you see 'unauthorized_client' error, the kagenti client may need Direct Access Grants enabled."
+    echo "You can enable it manually in Keycloak admin console or run this script again."
     exit 1
 fi
 
@@ -157,8 +194,8 @@ echo "✓ Successfully obtained authentication token"
 
 echo ""
 
-# Step 5: Set up port-forward to Kagenti backend
-echo "Step 5: Setting up port-forward to Kagenti backend..."
+# Step 6: Set up port-forward to Kagenti backend
+echo "Step 6: Setting up port-forward to Kagenti backend..."
 
 # Check if port-forward is already running
 if lsof -Pi :$KAGENTI_PORT -sTCP:LISTEN -t >/dev/null 2>&1; then
@@ -186,8 +223,8 @@ fi
 
 echo ""
 
-# Step 6: Delete existing tool via Kagenti API if it exists
-echo "Step 6: Deleting existing tool via Kagenti API if it exists..."
+# Step 7: Delete existing tool via Kagenti API if it exists
+echo "Step 7: Deleting existing tool via Kagenti API if it exists..."
 DELETE_RESPONSE=$(curl -s -w "%{http_code}" -o /tmp/kagenti_delete_response.txt -X DELETE "$KAGENTI_API/api/v1/tools/$NAMESPACE/$TOOL_NAME" \
     -H "Authorization: Bearer $ACCESS_TOKEN")
 
@@ -203,8 +240,8 @@ sleep 3
 
 echo ""
 
-# Step 7: Deploy tool using Kagenti API
-echo "Step 7: Deploying tool via Kagenti API..."
+# Step 8: Deploy tool using Kagenti API
+echo "Step 8: Deploying tool via Kagenti API..."
 
 # Create tool deployment JSON following Kagenti API format
 TOOL_JSON=$(cat <<EOF
@@ -264,16 +301,16 @@ else
 fi
 echo ""
 
-# Step 8: Patch imagePullPolicy to IfNotPresent for local images
-echo "Step 8: Patching imagePullPolicy to IfNotPresent..."
+# Step 9: Patch imagePullPolicy to IfNotPresent for local images
+echo "Step 9: Patching imagePullPolicy to IfNotPresent..."
 sleep 2  # Give the deployment a moment to be created
 kubectl patch deployment $TOOL_NAME -n $NAMESPACE -p '{"spec":{"template":{"spec":{"containers":[{"name":"mcp","imagePullPolicy":"IfNotPresent"}]}}}}' 2>/dev/null || echo "Warning: Could not patch imagePullPolicy"
 echo "✓ ImagePullPolicy patched"
 
 echo ""
 
-# Step 9: Wait for tool to be ready
-echo "Step 9: Waiting for tool to be ready..."
+# Step 10: Wait for tool to be ready
+echo "Step 10: Waiting for tool to be ready..."
 
 MAX_WAIT=120
 WAIT_INTERVAL=5
