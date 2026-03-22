@@ -201,18 +201,9 @@ class A2AProxyClient:
         """
         status = task.get("status", {})
         state = status.get("state")
+        extracted_text = None
 
-        if state == "failed":
-            error = status.get("error", "Unknown error")
-            raise ValueError(f"Task failed: {error}")
-
-        if state == "canceled":
-            raise ValueError("Task was canceled")
-
-        if state == "rejected":
-            raise ValueError("Task was rejected")
-
-        # Look for artifacts in task (A2A spec)
+        # First, try to extract all possible data from artifacts (A2A spec)
         if "artifacts" in task:
             artifacts = task["artifacts"]
             if isinstance(artifacts, list) and len(artifacts) > 0:
@@ -227,22 +218,49 @@ class A2AProxyClient:
                                 if text:
                                     text_parts.append(text)
                         if text_parts:
-                            return "\n".join(text_parts)
+                            extracted_text = "\n".join(text_parts)
 
-        # Look for result in task (fallback)
-        if "result" in task:
+        # If no artifacts, look for result in task (fallback)
+        if not extracted_text and "result" in task:
             result = task["result"]
             if isinstance(result, dict):
                 # Try to extract message from result
                 if "message" in result:
-                    return self._extract_text_from_message(result["message"])
+                    try:
+                        extracted_text = self._extract_text_from_message(result["message"])
+                    except ValueError:
+                        pass
                 # Try direct text extraction
-                if "text" in result:
-                    return str(result["text"])
-                if "content" in result:
-                    return str(result["content"])
+                if not extracted_text and "text" in result:
+                    extracted_text = str(result["text"])
+                if not extracted_text and "content" in result:
+                    extracted_text = str(result["content"])
             elif isinstance(result, str):
-                return result
+                extracted_text = result
+
+        # Now handle different states with extracted information
+        if state == "failed":
+            error = status.get("error", "Unknown error")
+            if extracted_text:
+                raise ValueError(f"Task failed: {error}. Output: {extracted_text}")
+            else:
+                raise ValueError(f"Task failed: {error}")
+
+        if state == "canceled":
+            if extracted_text:
+                raise ValueError(f"Task was canceled. Partial output: {extracted_text}")
+            else:
+                raise ValueError("Task was canceled")
+
+        if state == "rejected":
+            if extracted_text:
+                raise ValueError(f"Task was rejected. Output: {extracted_text}")
+            else:
+                raise ValueError("Task was rejected")
+
+        # For completed tasks, return the extracted text
+        if extracted_text:
+            return extracted_text
 
         raise ValueError("Could not extract text from task result")
 
