@@ -280,16 +280,6 @@ TOOL_JSON=$(cat <<EOF
   "containerImage": "$IMAGE_NAME",
   "workloadType": "deployment",
   "envVars": $ENV_VARS,
-  "resources": {
-    "limits": {
-      "cpu": "500m",
-      "memory": "2Gi"
-    },
-    "requests": {
-      "cpu": "100m",
-      "memory": "256Mi"
-    }
-  },
   "servicePorts": [
     {
       "name": "http",
