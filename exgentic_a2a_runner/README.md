@@ -35,12 +35,43 @@ The runner follows this execution model for each benchmark session:
 
 ### Install from source
 
+#### Deploy a kagenti cluster
+
+```bash
+git clone git@github.com:kagenti/kagenti.git
+cd kagenti
+./run-install.sh --env dev --preload --extra-vars '{"container_engine": "podman"}'
+deployments/ansible/run-install.sh --env dev --preload --extra-vars '{"container_engine": "podman"}'
+```
+
+
+#### Clone and build exgentic mcp server local images
+```bash
+git clone git@github.com:kagenti/workload-harness.git
+cd agent-examples/mcp/exgentic_benchmarks
+./build.sh appworld latest # can also use tau2, gsm8k
+```
+
+#### Deploy general agent and mcp per per benchmark
+
 ```bash
 git clone git@github.com:kagenti/workload-harness.git
 cd workload-harness/exgentic_a2a_runner
 uv sync --python 3.12
 source .venv/bin/activate
+
+# Deploys mcp server using Kagenti Tool API based on local benchmark image created above
+./deploy-benchmark.sh appworld 
+# Deploy a generalist agent using Kagenti Agent API that connects to the benchmark mcp
+./deploy-agent.sh appworld 
+
+# 1. Updates OPENAI_API_BASE and OPENAI_API_KEY from environment env to running deployments
+# 2. Increase memory limit (workaround because was not able to specify resources on deployment)
+# 3. Sets the model used by the agents
+./configure-agent-and-benchmark-environment.sh appworld GCP/gemini-2.5-pro
+
 ```
+
 
 ## Configuration
 
@@ -50,12 +81,6 @@ cp example.env .env
 
 Configure the .env file as needed.
 
-### Required Variables
-
-| Environment Variable | Default Setting | Required? | Description |
-| --- | --- | --- | --- |
-| `EXGENTIC_MCP_SERVER_URL` | `(none)` | Yes | URL for the Exgentic MCP server that provides benchmark tasks. |
-| `A2A_BASE_URL` | `(none)` | Yes | Base URL for the target agent to run the tests against. Must be A2A compatible. |
 
 ### Optional Variables
 
@@ -82,13 +107,7 @@ Configure the .env file as needed.
 ### Basic Usage
 
 ```bash
-uv run exgentic-a2a-runner
-```
-
-### With Verbose Logging
-
-```bash
-uv run exgentic-a2a-runner --verbose
+./evaluate_benchmark.sh appworld
 ```
 
 ## Output

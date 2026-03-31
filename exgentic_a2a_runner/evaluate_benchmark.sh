@@ -52,16 +52,16 @@ fi
 
 echo ""
 echo "Setting up port forwarding..."
-echo "  - MCP Server: localhost:8000 -> $BENCHMARK_SERVICE.team1:8000"
-echo "  - A2A Agent:  localhost:8081 -> $AGENT_SERVICE.team1:8080"
+echo "  - MCP Server: localhost:7770 -> $BENCHMARK_SERVICE.team1:8000"
+echo "  - A2A Agent:  localhost:7701 -> $AGENT_SERVICE.team1:8080"
 echo ""
 
 # Kill any existing port-forwards on these ports
-echo "Cleaning up existing port-forwards on ports 8000 and 8081..."
-# Kill any process using port 8000
-lsof -ti:8000 | xargs kill -9 2>/dev/null || true
-# Kill any process using port 8081
-lsof -ti:8081 | xargs kill -9 2>/dev/null || true
+echo "Cleaning up existing port-forwards on ports 7770 and 7701..."
+# Kill any process using port 7770
+lsof -ti:7770 | xargs kill -9 2>/dev/null || true
+# Kill any process using port 7701
+lsof -ti:7701 | xargs kill -9 2>/dev/null || true
 sleep 2
 
 # Check if pods are ready before port-forwarding
@@ -96,11 +96,11 @@ sleep 10
 
 # Start port forwarding in background
 echo "Starting port-forward for MCP server..."
-kubectl port-forward -n team1 svc/$BENCHMARK_SERVICE 8000:8000 &
+kubectl port-forward -n team1 svc/$BENCHMARK_SERVICE 7770:8000 &
 PF_MCP_PID=$!
 
 echo "Starting port-forward for A2A agent..."
-kubectl port-forward -n team1 svc/$AGENT_SERVICE 8081:8080 &
+kubectl port-forward -n team1 svc/$AGENT_SERVICE 7701:8080 &
 PF_AGENT_PID=$!
 
 # Wait for port forwards to be ready
@@ -139,14 +139,14 @@ echo ""
 # Test connectivity
 echo "Testing connectivity..."
 echo -n "  MCP Server: "
-if curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/health 2>/dev/null | grep -q "200\|404"; then
+if curl -s -o /dev/null -w "%{http_code}" http://localhost:7770/health 2>/dev/null | grep -q "200\|404"; then
     echo "✓ Reachable"
 else
     echo "⚠ May not be reachable - this might be OK if no /health endpoint"
 fi
 
 echo -n "  A2A Agent:  "
-if curl -s -o /dev/null -w "%{http_code}" http://localhost:8081/.well-known/agent-card.json 2>/dev/null | grep -q "200\|404"; then
+if curl -s -o /dev/null -w "%{http_code}" http://localhost:7701/.well-known/agent-card.json 2>/dev/null | grep -q "200\|404"; then
     echo "✓ Reachable"
 else
     echo "⚠ May not be reachable - this might be OK"
