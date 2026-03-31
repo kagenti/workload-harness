@@ -1,17 +1,20 @@
 #!/bin/bash
 # Configure agent and benchmark environment settings
-# Usage: ./configure-agent-environment.sh <benchmark-name>
+# Usage: ./configure-agent-environment.sh <benchmark-name> [model-name]
 # Example: ./configure-agent-environment.sh gsm8k
+# Example: ./configure-agent-environment.sh gsm8k Azure/gpt-4o-mini
 # This script updates the Kubernetes secret and environment variables for both agent and benchmark
 
 set -e
 
 BENCHMARK_NAME="$1"
+MODEL_NAME="${2:-Azure/gpt-4o}"  # Default to Azure/gpt-4o if not provided
 
 if [ -z "$BENCHMARK_NAME" ]; then
     echo "Error: Benchmark name is required"
-    echo "Usage: $0 <benchmark-name>"
+    echo "Usage: $0 <benchmark-name> [model-name]"
     echo "Example: $0 gsm8k"
+    echo "Example: $0 gsm8k Azure/gpt-4o-mini"
     exit 1
 fi
 
@@ -24,6 +27,7 @@ echo "Configuring Environment"
 echo "=========================================="
 echo "Agent: $AGENT_NAME"
 echo "Benchmark: $BENCHMARK_DEPLOYMENT"
+echo "Model: $MODEL_NAME"
 echo ""
 
 # Step 1: Update the openai-secret with current OPENAI_API_KEY
@@ -66,7 +70,7 @@ fi
 kubectl set env deployment/$AGENT_NAME -n $NAMESPACE \
     LLM_API_BASE="$OPENAI_API_BASE" \
     OPENAI_API_BASE="$OPENAI_API_BASE" \
-    LLM_MODEL="Azure/gpt-4o"
+    LLM_MODEL="$MODEL_NAME"
 
 echo "✓ Agent environment variables updated"
 echo ""
@@ -82,7 +86,7 @@ echo "Agent configuration applied:"
 echo "  Deployment: $AGENT_NAME"
 echo "  LLM_API_BASE: $OPENAI_API_BASE"
 echo "  OPENAI_API_BASE: $OPENAI_API_BASE"
-echo "  LLM_MODEL: Azure/gpt-4o"
+echo "  LLM_MODEL: $MODEL_NAME"
 echo "  OPENAI_API_KEY: (updated secret from env var)"
 echo ""
 
@@ -96,6 +100,13 @@ echo "Step 4: Updating benchmark deployment with Azure OpenAI settings..."
 
 # Check if benchmark deployment exists
 if kubectl get deployment $BENCHMARK_DEPLOYMENT -n $NAMESPACE >/dev/null 2>&1; then
+    # Set memory limit to 3GB
+    kubectl set resources deployment/$BENCHMARK_DEPLOYMENT -n $NAMESPACE \
+        --limits=memory=3Gi
+    
+    echo "✓ Benchmark memory limit set to 3Gi"
+    echo ""
+    
     # Set OPENAI_API_BASE for all benchmarks
     kubectl set env deployment/$BENCHMARK_DEPLOYMENT -n $NAMESPACE \
         OPENAI_API_BASE="$OPENAI_API_BASE"
@@ -103,7 +114,7 @@ if kubectl get deployment $BENCHMARK_DEPLOYMENT -n $NAMESPACE >/dev/null 2>&1; t
     # Only set EXGENTIC_SET_BENCHMARK_USER_SIMULATOR_MODEL for tau benchmarks
     if [[ "$BENCHMARK_NAME" == tau* ]]; then
         kubectl set env deployment/$BENCHMARK_DEPLOYMENT -n $NAMESPACE \
-            EXGENTIC_SET_BENCHMARK_USER_SIMULATOR_MODEL=openai/Azure/gpt-4o
+            EXGENTIC_SET_BENCHMARK_USER_SIMULATOR_MODEL="openai/$MODEL_NAME"
         echo "✓ Benchmark environment variables updated (including user simulator model for tau benchmark)"
     else
         echo "✓ Benchmark environment variables updated"
@@ -119,9 +130,10 @@ if kubectl get deployment $BENCHMARK_DEPLOYMENT -n $NAMESPACE >/dev/null 2>&1; t
     
     echo "Benchmark configuration applied:"
     echo "  Deployment: $BENCHMARK_DEPLOYMENT"
+    echo "  Memory Limit: 3Gi"
     echo "  OPENAI_API_BASE: $OPENAI_API_BASE"
     if [[ "$BENCHMARK_NAME" == tau* ]]; then
-        echo "  EXGENTIC_SET_BENCHMARK_USER_SIMULATOR_MODEL: openai/Azure/gpt-4o"
+        echo "  EXGENTIC_SET_BENCHMARK_USER_SIMULATOR_MODEL: openai/$MODEL_NAME"
     fi
     echo "  OPENAI_API_KEY: (updated secret from env var)"
 else
