@@ -6,7 +6,7 @@ Provides high-level interface to Exgentic MCP server operations.
 import logging
 import time
 from dataclasses import dataclass
-from typing import Iterator, Optional
+from typing import Any, Dict, Iterator, Optional
 
 from .config import ExgenticConfig
 from .mcp_client import MCPClient
@@ -20,6 +20,7 @@ class SessionData:
 
     session_id: str
     task: str
+    context: Optional[Dict[str, Any]]
     created_at: float
 
 
@@ -70,7 +71,7 @@ class ExgenticAdapter:
         created_at = time.time()
 
         try:
-            session_id, task = self.mcp_client.create_session(task_id=task_id)
+            session_id, task, context = self.mcp_client.create_session(task_id=task_id)
             
             self._session_count += 1
             logger.info(f"Created session {self._session_count}: {session_id}")
@@ -78,6 +79,7 @@ class ExgenticAdapter:
             return SessionData(
                 session_id=session_id,
                 task=task,
+                context=context,
                 created_at=created_at,
             )
 

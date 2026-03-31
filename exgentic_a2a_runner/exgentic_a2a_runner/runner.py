@@ -189,9 +189,9 @@ class Runner:
             a2a_timeout=self.config.a2a.timeout_seconds,
         ) as span:
             try:
-                # Build prompt with session_id
+                # Build prompt with session_id and context
                 with self.otel.child_span("exgentic_a2a.prompt.build") as prompt_span:
-                    prompt = build_prompt(session_data.task, session_data.session_id)
+                    prompt = build_prompt(session_data.task, session_data.session_id, session_data.context)
                     # Record prompt on the build span
                     self.otel.record_prompt(prompt_span, prompt)
                 

@@ -96,14 +96,14 @@ class MCPClient:
             logger.error(f"Failed to list tasks: {e}")
             raise RuntimeError(f"Task listing failed: {e}")
 
-    def create_session(self, task_id: str) -> Tuple[str, str]:
+    def create_session(self, task_id: str) -> Tuple[str, str, Optional[Dict[str, Any]]]:
         """Create a new benchmark session.
 
         Args:
             task_id: Optional task ID. If not provided, will use the first available task.
 
         Returns:
-            Tuple of (session_id, task_description)
+            Tuple of (session_id, task_description, context)
 
         Raises:
             RuntimeError: If session creation fails
@@ -120,9 +120,10 @@ class MCPClient:
             result = asyncio.run(self._async_create_session(task_id))
             session_id = result["session_id"]
             task = result.get("task", result.get("task_description", ""))
+            context = result.get("context")
             
             logger.info(f"Created session {session_id} for task {task_id}")
-            return session_id, task
+            return session_id, task, context
 
         except Exception as e:
             logger.error(f"Failed to create session: {e}")
