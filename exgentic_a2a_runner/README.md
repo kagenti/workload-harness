@@ -91,32 +91,49 @@ source .venv/bin/activate
 
 ## Configuration
 
+The `evaluate_benchmark.sh` script automatically configures `EXGENTIC_MCP_SERVER_URL` and `A2A_BASE_URL` for port-forwarded services. To customize other settings:
+
 ```bash
 cp example.env .env
 ```
 
-Configure the .env file as needed.
+Then edit the .env file as needed.
 
+### Main Configuration
 
-### Optional Variables
+| Environment Variable | Default | Description |
+| --- | --- | --- |
+| `MAX_TASKS` | `(none)` | Maximum number of sessions to process. Useful for testing with a subset. |
+| `MAX_PARALLEL_SESSIONS` | `1` | Number of sessions to run concurrently. Set higher for parallel execution. |
+| `ABORT_ON_FAILURE` | `false` | Stop processing after the first failed session. |
 
-| Environment Variable | Default Setting | Required? | Description |
-| --- | --- | --- | --- |
-| `EXGENTIC_MCP_TIMEOUT_SECONDS` | `60` | No | Timeout for MCP operations in seconds. |
-| `MAX_TASKS` | `(none)` | No | Maximum number of sessions to process before exiting. |
-| `ABORT_ON_FAILURE` | `false` | No | Stops processing after the first failed session when enabled. |
-| `A2A_TIMEOUT_SECONDS` | `300` | No | Timeout for each A2A request in seconds. |
-| `A2A_AUTH_TOKEN` | `(none)` | No | Bearer token sent for A2A endpoint authentication. |
-| `A2A_VERIFY_TLS` | `true` | No | Whether TLS certificates are verified for HTTPS requests. |
-| `A2A_ENDPOINT_PATH` | `/v1/chat` | No | Endpoint path appended to `A2A_BASE_URL` for requests. |
-| `OTEL_SERVICE_NAME` | `exgentic-a2a-runner` | No | OpenTelemetry service name reported with traces. |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | `(none)` | No | OTLP collector endpoint used to export telemetry. |
-| `OTEL_EXPORTER_OTLP_PROTOCOL` | `grpc` | No | OTLP transport protocol (`grpc` or `http/protobuf`). |
-| `OTEL_RESOURCE_ATTRIBUTES` | `(none)` | No | Additional OpenTelemetry resource attributes (`key=value`). |
-| `OTEL_INSTRUMENT_REQUESTS` | `true` | No | Enables automatic instrumentation for HTTP requests. |
-| `OTEL_EXPORTER_OTLP_INSECURE` | `true` | No | Use insecure connection for OTLP exporter. |
-| `LOG_PROMPT` | `0` | No | Enables logging of prompt payloads for debugging. |
-| `LOG_RESPONSE` | `0` | No | Enables logging of response payloads for debugging. |
+### Debug Configuration
+
+| Environment Variable | Default | Description |
+| --- | --- | --- |
+| `LOG_PROMPT` | `0` | Log prompt payloads for debugging (1 to enable). |
+| `LOG_RESPONSE` | `0` | Log response payloads for debugging (1 to enable). |
+
+### Tracing Configuration (OpenTelemetry)
+
+| Environment Variable | Default | Description |
+| --- | --- | --- |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `(none)` | OTLP collector endpoint (e.g., `http://localhost:4317` for Jaeger). If not set, no traces are exported. |
+| `OTEL_SERVICE_NAME` | `exgentic-a2a-runner` | Service name in traces. |
+| `OTEL_RESOURCE_ATTRIBUTES` | `(none)` | Additional resource attributes (format: `key1=val1,key2=val2`). |
+| `OTEL_INSTRUMENT_REQUESTS` | `true` | Auto-instrument HTTP requests. |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | `grpc` | OTLP protocol (`grpc` or `http/protobuf`). |
+| `OTEL_EXPORTER_OTLP_INSECURE` | `true` | Use insecure OTLP connection. |
+
+### Advanced Configuration
+
+| Environment Variable | Default | Description |
+| --- | --- | --- |
+| `EXGENTIC_MCP_TIMEOUT_SECONDS` | `60` | Timeout for MCP operations. |
+| `A2A_TIMEOUT_SECONDS` | `300` | Timeout for A2A requests. |
+| `A2A_AUTH_TOKEN` | `(none)` | Bearer token for A2A authentication. |
+| `A2A_VERIFY_TLS` | `true` | Verify TLS certificates for HTTPS. |
+| `A2A_ENDPOINT_PATH` | `/v1/chat` | Endpoint path for A2A requests. |
 
 ## Usage
 

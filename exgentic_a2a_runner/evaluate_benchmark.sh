@@ -177,6 +177,10 @@ if [ -f ".env" ]; then
     echo ""
 fi
 
+# Set URLs for port-forwarded services (override .env if present)
+export EXGENTIC_MCP_SERVER_URL="http://localhost:7770/mcp"
+export A2A_BASE_URL="http://localhost:7701"
+
 # Run the harness
 echo "Running: uv run exgentic-a2a-runner --verbose"
 echo ""
