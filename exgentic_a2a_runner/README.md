@@ -47,16 +47,20 @@ deployments/ansible/run-install.sh --env dev --preload --extra-vars '{"container
 
 #### Clone and build exgentic mcp server local images
 ```bash
-git clone git@github.com:kagenti/workload-harness.git
-cd agent-examples/mcp/exgentic_benchmarks
+git clone git@github.com:yoavkatz/agent-examples.git
+cd agent-examples
+git checkout feature/exgentic-mcp-server
+cd mcp/exgentic_benchmarks
 ./build.sh appworld latest # can also use tau2, gsm8k
 ```
 
-#### Deploy general agent and mcp per per benchmark
+#### Deploy general agent and mcp per benchmark
 
 ```bash
-git clone git@github.com:kagenti/workload-harness.git
-cd workload-harness/exgentic_a2a_runner
+git clone git@github.com:yoavkatz/workload-harness.git
+cd workload-harness
+git checkout feature/exgentic-a2a-runner
+cd exgentic_a2a_runner
 uv sync --python 3.12
 source .venv/bin/activate
 
