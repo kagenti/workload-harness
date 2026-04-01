@@ -337,6 +337,7 @@ When OTEL is enabled, you'll see:
 - No retry mechanism for failed operations
 - No streaming response support
 - Assumes MCP server is already configured for specific benchmark
+- Tested only with local kind Kagenti installation with Podman (not tested with Docker)
 
 ## Troubleshooting
 
