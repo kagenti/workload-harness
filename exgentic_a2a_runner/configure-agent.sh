@@ -75,7 +75,8 @@ if kubectl get deployment $AGENT_NAME -n $NAMESPACE >/dev/null 2>&1; then
     kubectl set env deployment/$AGENT_NAME -n $NAMESPACE \
         LLM_API_BASE="$OPENAI_API_BASE" \
         OPENAI_API_BASE="$OPENAI_API_BASE" \
-        LLM_MODEL="$MODEL_NAME"
+        LLM_MODEL="$MODEL_NAME" \
+        EXGENTIC_SET_AGENT_MODEL="$MODEL_NAME"
 
     echo "✓ Agent environment variables updated"
     echo ""
@@ -92,6 +93,7 @@ if kubectl get deployment $AGENT_NAME -n $NAMESPACE >/dev/null 2>&1; then
     echo "  LLM_API_BASE: $OPENAI_API_BASE"
     echo "  OPENAI_API_BASE: $OPENAI_API_BASE"
     echo "  LLM_MODEL: $MODEL_NAME"
+    echo "  EXGENTIC_SET_AGENT_MODEL=$MODEL_NAME"
     echo "  OPENAI_API_KEY: (updated secret from env var)"
 else
     echo "✗ Agent deployment not found: $AGENT_NAME"

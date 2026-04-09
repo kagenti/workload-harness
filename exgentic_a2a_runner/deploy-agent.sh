@@ -241,25 +241,35 @@ echo "Step 6: Fetching environment variables..."
 
 if [ "$DEPLOYMENT_TYPE" = "source" ]; then
     # Generic agent - fetch from agent-examples repo
-    ENV_CONTENT=$(curl -s https://raw.githubusercontent.com/kagenti/agent-examples/refs/heads/main/a2a/generic_agent/.env.openai)
+    ENV_FILE_URL="https://raw.githubusercontent.com/kagenti/agent-examples/refs/heads/main/a2a/generic_agent/.env.openai"
 else
-    # Exgentic agent - no remote env file, will use default env vars
-    ENV_CONTENT=""
+    # Exgentic agent - fetch env file for specific agent
+    ENV_FILE_URL="https://raw.githubusercontent.com/yoavkatz/agent-examples/refs/heads/feature/exgentic-mcp-server/a2a/exgentic_agent/.env.example"
 fi
 
-if [ -n "$ENV_CONTENT" ]; then
-    # Parse env vars using the Kagenti API
-    ENV_PARSE_RESPONSE=$(curl -s -X POST "$KAGENTI_API/api/v1/agents/parse-env" \
-        -H "Content-Type: application/json" \
-        -H "Authorization: Bearer $ACCESS_TOKEN" \
-        -d "{\"content\": $(echo "$ENV_CONTENT" | jq -Rs .)}")
-    
-    ENV_VARS=$(echo "$ENV_PARSE_RESPONSE" | jq '.envVars')
-    echo "✓ Environment variables parsed"
-else
-    ENV_VARS="[]"
-    echo "✓ Using default environment variables"
+ENV_CONTENT=$(curl -s "$ENV_FILE_URL")
+
+if [ -z "$ENV_CONTENT" ] || echo "$ENV_CONTENT" | grep -q "404: Not Found"; then
+    echo "Error: Could not fetch env file"
+    echo "Expected file: $ENV_FILE_URL"
+    exit 1
 fi
+
+# Parse env vars using the Kagenti API
+ENV_PARSE_RESPONSE=$(curl -s -X POST "$KAGENTI_API/api/v1/agents/parse-env" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $ACCESS_TOKEN" \
+    -d "{\"content\": $(echo "$ENV_CONTENT" | jq -Rs .)}")
+
+ENV_VARS=$(echo "$ENV_PARSE_RESPONSE" | jq '.envVars')
+
+if [ "$ENV_VARS" = "null" ] || [ -z "$ENV_VARS" ]; then
+    echo "Error: Could not parse environment variables"
+    echo "Response: $ENV_PARSE_RESPONSE"
+    exit 1
+fi
+
+echo "✓ Environment variables parsed"
 
 echo ""
 
