@@ -64,7 +64,7 @@ cd mcp/exgentic_benchmarks
 ./build.sh appworld latest # can also use tau2, gsm8k
 ```
 
-#### Deploy general agent and mcp per benchmark
+#### Deploy agent and MCP server per benchmark
 
 ```bash
 git clone git@github.com:yoavkatz/workload-harness.git
@@ -75,26 +75,37 @@ uv sync --python 3.12
 source .venv/bin/activate
 
 # Deploy MCP server using Kagenti Tool API based on local benchmark image created above
-./deploy-benchmark.sh appworld
+./deploy-benchmark.sh tau2
 
-# Deploy a generalist agent using Kagenti Agent API that connects to the benchmark MCP
-./deploy-agent.sh appworld
+# Deploy an agent using Kagenti Agent API that connects to the benchmark MCP
+# Option 1: Deploy generic agent (default)
+./deploy-agent.sh tau2 generic_agent
 
-# Configure the deployment:
-# 1. Updates OPENAI_API_BASE and OPENAI_API_KEY from environment to running deployments
-# 2. Sets benchmark pod memory limit to 3GB
-# 3. Sets the model used by the agent (optional, defaults to Azure/gpt-4o).  For appworld, use gemini-2.5-pro or other models, because open ai models can not handle the number of tools in appworld, without special tool shortlisting.
-./configure-agent-and-benchmark-environment.sh appworld GCP/gemini-2.5-pro
+# Option 2: Deploy custom agent (e.g., tool_calling)
+./deploy-agent.sh tau2 tool_calling
 
-# Or use default model:
-# ./configure-agent-and-benchmark-environment.sh appworld
+# Configure the agent deployment:
+# Updates OPENAI_API_BASE, OPENAI_API_KEY, and model settings
+# For generic agent:
+./configure-agent.sh tau2 generic_agent Azure/gpt-4o
+
+# For custom agent:
+./configure-agent.sh tau2 tool_calling Azure/gpt-4o
+
+# Configure the benchmark deployment:
+# Sets memory limit to 3GB and configures OpenAI settings
+# For appworld, use gemini-2.5-pro or other models, because OpenAI models
+# cannot handle the number of tools in appworld without special tool shortlisting
+./configure-benchmark.sh tau2 Azure/gpt-4o
 ```
 
 **Note:** The deploy scripts accept optional Keycloak credentials (default: admin/admin):
 ```bash
 ./deploy-benchmark.sh <benchmark-name> [keycloak-username] [keycloak-password]
-./deploy-agent.sh <benchmark-name> [keycloak-username] [keycloak-password]
+./deploy-agent.sh <benchmark-name> <agent-name> [keycloak-username] [keycloak-password]
 ```
+
+**Agent Naming:** When deploying custom agents, underscores in agent names are automatically converted to hyphens for Kubernetes compatibility (e.g., `tool_calling` becomes `tool-calling`).
 
 
 ## Configuration
@@ -158,7 +169,11 @@ The `evaluate_benchmark.sh` script automatically:
 - Cleans up port forwards on exit
 
 ```bash
-./evaluate_benchmark.sh appworld
+# Run with generic agent (default)
+./evaluate_benchmark.sh tau2
+
+# Run with custom agent
+./evaluate_benchmark.sh tau2 tool_calling
 ```
 
 

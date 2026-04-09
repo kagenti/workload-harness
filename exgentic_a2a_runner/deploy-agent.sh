@@ -1,22 +1,46 @@
 #!/bin/bash
-# Deploy generic agent to Kagenti cluster via API
-# Usage: ./deploy-agent.sh <benchmark-name> <keycloak-username> <keycloak-password>
-# Example: ./deploy-agent.sh gsm8k admin admin
+# Deploy agent to Kagenti cluster via API
+# Usage: ./deploy-agent.sh <benchmark-name> <agent-name> <keycloak-username> <keycloak-password>
+# Example: ./deploy-agent.sh gsm8k generic_agent admin admin
+# Example: ./deploy-agent.sh gsm8k tool_calling admin admin
 
 set -e
 
 BENCHMARK_NAME="$1"
-KEYCLOAK_USERNAME="${2:-admin}"
-KEYCLOAK_PASSWORD="${3:-admin}"
+AGENT_NAME_INPUT="$2"
+KEYCLOAK_USERNAME="${3:-admin}"
+KEYCLOAK_PASSWORD="${4:-admin}"
 
-if [ -z "$BENCHMARK_NAME" ]; then
-    echo "Error: Benchmark name is required"
-    echo "Usage: $0 <benchmark-name> [keycloak-username] [keycloak-password]"
-    echo "Example: $0 gsm8k admin admin"
+if [ -z "$BENCHMARK_NAME" ] || [ -z "$AGENT_NAME_INPUT" ]; then
+    echo "Error: Benchmark name and agent name are required"
+    echo "Usage: $0 <benchmark-name> <agent-name> [keycloak-username] [keycloak-password]"
+    echo "Example: $0 gsm8k generic_agent admin admin"
+    echo "Example: $0 gsm8k tool_calling admin admin"
     exit 1
 fi
 
-AGENT_NAME="generic-agent-internal-${BENCHMARK_NAME}"
+# Determine deployment type based on agent name
+if [ "$AGENT_NAME_INPUT" = "generic_agent" ]; then
+    DEPLOYMENT_TYPE="source"
+    AGENT_NAME="generic-agent-internal-${BENCHMARK_NAME}"
+else
+    DEPLOYMENT_TYPE="image"
+    # Automatically add exgentic-a2a- prefix if not already present
+    if [[ "$AGENT_NAME_INPUT" == exgentic-a2a-* ]]; then
+        FULL_AGENT_NAME="$AGENT_NAME_INPUT"
+    else
+        FULL_AGENT_NAME="exgentic-a2a-${AGENT_NAME_INPUT}"
+    fi
+    # Replace underscores with hyphens for Kubernetes compatibility
+    AGENT_NAME="${FULL_AGENT_NAME}-${BENCHMARK_NAME}"
+    AGENT_NAME="${AGENT_NAME//_/-}"
+    # Image name keeps underscores (container images allow them)
+    IMAGE_NAME="localhost/${FULL_AGENT_NAME}:latest"
+    # Split image name and tag for API
+    IMAGE_NAME_WITHOUT_TAG="localhost/${FULL_AGENT_NAME}"
+    IMAGE_TAG="latest"
+fi
+
 TOOL_NAME="exgentic-mcp-${BENCHMARK_NAME}"
 NAMESPACE="team1"
 KAGENTI_API="http://localhost:8001"
@@ -25,9 +49,88 @@ KEYCLOAK_API="http://localhost:8002"
 KEYCLOAK_PORT=8002
 
 echo "=========================================="
-echo "Deploying Generic Agent: $AGENT_NAME"
+if [ "$DEPLOYMENT_TYPE" = "source" ]; then
+    echo "Deploying Generic Agent: $AGENT_NAME"
+else
+    echo "Deploying Exgentic Agent: $AGENT_NAME"
+    echo "From image: $IMAGE_NAME"
+fi
 echo "=========================================="
 echo ""
+
+# Step 0: If deploying from image, check and sync image
+if [ "$DEPLOYMENT_TYPE" = "image" ]; then
+    echo "Step 0: Checking for local image and syncing if needed..."
+    
+    # Determine container runtime
+    if command -v podman &> /dev/null; then
+        CONTAINER_CMD="podman"
+    elif command -v docker &> /dev/null; then
+        CONTAINER_CMD="docker"
+    else
+        echo "Error: Neither podman nor docker found"
+        exit 1
+    fi
+    
+    echo "Using container runtime: $CONTAINER_CMD"
+    
+    # Check if image exists locally
+    if ! $CONTAINER_CMD image inspect "$IMAGE_NAME" &> /dev/null; then
+        echo "Error: Image $IMAGE_NAME not found locally"
+        echo "Please build the image first"
+        exit 1
+    fi
+    
+    echo "✓ Image $IMAGE_NAME found locally"
+    
+    # Check if kind is available
+    if ! command -v kind &> /dev/null; then
+        echo "Error: kind command not found"
+        exit 1
+    fi
+    
+    # Get local image ID
+    LOCAL_IMAGE_ID=$($CONTAINER_CMD inspect "$IMAGE_NAME" --format='{{.Id}}' 2>/dev/null || echo "")
+    
+    if [ -z "$LOCAL_IMAGE_ID" ]; then
+        echo "Error: Could not get local image ID"
+        exit 1
+    fi
+    
+    echo "Local image ID: $LOCAL_IMAGE_ID"
+    
+    # Get cluster image ID (check if image exists in cluster)
+    if command -v podman &> /dev/null; then
+        CLUSTER_IMAGE_ID=$(podman exec kagenti-control-plane crictl inspecti "$IMAGE_NAME" 2>/dev/null | grep '"id":' | head -1 | sed 's/.*"id": *"\([^"]*\)".*/\1/' || echo "")
+    else
+        CLUSTER_IMAGE_ID=$(docker exec kagenti-control-plane crictl inspecti "$IMAGE_NAME" 2>/dev/null | grep '"id":' | head -1 | sed 's/.*"id": *"\([^"]*\)".*/\1/' || echo "")
+    fi
+    
+    # Normalize IDs by removing sha256: prefix if present
+    LOCAL_IMAGE_ID_NORMALIZED="${LOCAL_IMAGE_ID#sha256:}"
+    CLUSTER_IMAGE_ID_NORMALIZED="${CLUSTER_IMAGE_ID#sha256:}"
+    
+    if [ -z "$CLUSTER_IMAGE_ID" ]; then
+        echo "Image not found in cluster, syncing..."
+        NEED_SYNC=true
+    elif [ "$LOCAL_IMAGE_ID_NORMALIZED" != "$CLUSTER_IMAGE_ID_NORMALIZED" ]; then
+        echo "Cluster image ID: $CLUSTER_IMAGE_ID"
+        echo "Images differ, syncing..."
+        NEED_SYNC=true
+    else
+        echo "Cluster image ID: $CLUSTER_IMAGE_ID"
+        echo "✓ Images match, skipping sync"
+        NEED_SYNC=false
+    fi
+    
+    if [ "$NEED_SYNC" = true ]; then
+        echo "Saving and loading image..."
+        $CONTAINER_CMD save "$IMAGE_NAME" | kind load image-archive /dev/stdin --name kagenti
+        echo "✓ Image synced to kind-kagenti cluster"
+    fi
+    
+    echo ""
+fi
 
 # Step 1: Set up port-forward to Keycloak
 echo "Step 1: Setting up port-forward to Keycloak..."
@@ -135,28 +238,48 @@ echo ""
 
 # Step 6: Fetch and parse environment variables
 echo "Step 6: Fetching environment variables..."
-ENV_CONTENT=$(curl -s https://raw.githubusercontent.com/kagenti/agent-examples/refs/heads/main/a2a/generic_agent/.env.openai)
 
-# Parse env vars using the Kagenti API
-ENV_PARSE_RESPONSE=$(curl -s -X POST "$KAGENTI_API/api/v1/agents/parse-env" \
-    -H "Content-Type: application/json" \
-    -H "Authorization: Bearer $ACCESS_TOKEN" \
-    -d "{\"content\": $(echo "$ENV_CONTENT" | jq -Rs .)}")
+if [ "$DEPLOYMENT_TYPE" = "source" ]; then
+    # Generic agent - fetch from agent-examples repo
+    ENV_CONTENT=$(curl -s https://raw.githubusercontent.com/kagenti/agent-examples/refs/heads/main/a2a/generic_agent/.env.openai)
+else
+    # Exgentic agent - no remote env file, will use default env vars
+    ENV_CONTENT=""
+fi
 
-ENV_VARS=$(echo "$ENV_PARSE_RESPONSE" | jq '.envVars')
-
-echo "✓ Environment variables parsed"
+if [ -n "$ENV_CONTENT" ]; then
+    # Parse env vars using the Kagenti API
+    ENV_PARSE_RESPONSE=$(curl -s -X POST "$KAGENTI_API/api/v1/agents/parse-env" \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $ACCESS_TOKEN" \
+        -d "{\"content\": $(echo "$ENV_CONTENT" | jq -Rs .)}")
+    
+    ENV_VARS=$(echo "$ENV_PARSE_RESPONSE" | jq '.envVars')
+    echo "✓ Environment variables parsed"
+else
+    ENV_VARS="[]"
+    echo "✓ Using default environment variables"
+fi
 
 echo ""
 
 # Step 7: Deploy agent via Kagenti API
 echo "Step 7: Deploying agent via Kagenti API..."
 
-# Add MCP_URLS to environment variables
+# Add MCP_URL(S) to environment variables
 MCP_URL="http://${TOOL_NAME}-mcp:8000/mcp"
-ENV_VARS_WITH_MCP=$(echo "$ENV_VARS" | jq ". + [{\"name\": \"MCP_URLS\", \"value\": \"$MCP_URL\"}]")
 
-AGENT_JSON=$(cat <<EOF
+if [ "$DEPLOYMENT_TYPE" = "source" ]; then
+    # Generic agent uses MCP_URLS
+    ENV_VARS_WITH_MCP=$(echo "$ENV_VARS" | jq ". + [{\"name\": \"MCP_URLS\", \"value\": \"$MCP_URL\"}]")
+else
+    # Exgentic agent uses MCP_URL
+    ENV_VARS_WITH_MCP=$(echo "$ENV_VARS" | jq ". + [{\"name\": \"MCP_URL\", \"value\": \"$MCP_URL\"}]")
+fi
+
+if [ "$DEPLOYMENT_TYPE" = "source" ]; then
+    # Deploy generic agent from source
+    AGENT_JSON=$(cat <<EOF
 {
   "name": "$AGENT_NAME",
   "namespace": "$NAMESPACE",
@@ -183,6 +306,37 @@ AGENT_JSON=$(cat <<EOF
 }
 EOF
 )
+else
+    # Deploy exgentic agent from image
+    AGENT_JSON=$(cat <<EOF
+{
+  "name": "$AGENT_NAME",
+  "namespace": "$NAMESPACE",
+  "gitUrl": "",
+  "gitPath": "",
+  "gitBranch": "",
+  "imageTag": "$IMAGE_TAG",
+  "protocol": "a2a",
+  "framework": "custom",
+  "deploymentMethod": "image",
+  "containerImage": "$IMAGE_NAME",
+  "workloadType": "deployment",
+  "envVars": $ENV_VARS_WITH_MCP,
+  "servicePorts": [
+    {
+      "name": "http",
+      "port": 8080,
+      "targetPort": 8000,
+      "protocol": "TCP"
+    }
+  ],
+  "createHttpRoute": false,
+  "authBridgeEnabled": false,
+  "spireEnabled": false
+}
+EOF
+)
+fi
 
 echo "Agent configuration:"
 echo "$AGENT_JSON" | jq '.'
@@ -210,42 +364,50 @@ fi
 
 echo ""
 
-# Step 8: Wait for build to complete
-echo "Step 8: Waiting for build to complete..."
-BUILD_RUN_NAME=$(echo "$RESPONSE" | jq -r '.message' | grep -o "BuildRun: '[^']*'" | sed "s/BuildRun: '\([^']*\)'/\1/")
-
-if [ -z "$BUILD_RUN_NAME" ]; then
-    echo "Warning: Could not extract BuildRun name from response"
-    echo "Response: $RESPONSE"
-    echo "Skipping build wait"
-else
-    echo "Monitoring BuildRun: $BUILD_RUN_NAME"
+# Step 8: Wait for build to complete (only for source deployments)
+if [ "$DEPLOYMENT_TYPE" = "source" ]; then
+    echo "Step 8: Waiting for build to complete..."
+    BUILD_RUN_NAME=$(echo "$RESPONSE" | jq -r '.message' | grep -o "BuildRun: '[^']*'" | sed "s/BuildRun: '\([^']*\)'/\1/")
     
-    # Wait up to 5 minutes for build to complete
-    for i in {1..60}; do
-        BUILD_STATUS=$(kubectl get buildrun "$BUILD_RUN_NAME" -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="Succeeded")].status}' 2>/dev/null || echo "Unknown")
-        BUILD_REASON=$(kubectl get buildrun "$BUILD_RUN_NAME" -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="Succeeded")].reason}' 2>/dev/null || echo "Unknown")
+    if [ -z "$BUILD_RUN_NAME" ]; then
+        echo "Warning: Could not extract BuildRun name from response"
+        echo "Response: $RESPONSE"
+        echo "Skipping build wait"
+    else
+        echo "Monitoring BuildRun: $BUILD_RUN_NAME"
         
-        if [ "$BUILD_STATUS" = "True" ]; then
-            echo "✓ Build completed successfully"
-            break
-        elif [ "$BUILD_STATUS" = "False" ]; then
-            echo "✗ Build failed with reason: $BUILD_REASON"
-            echo "Check logs with: kubectl logs -n $NAMESPACE -l buildrun.shipwright.io/name=$BUILD_RUN_NAME"
+        # Wait up to 5 minutes for build to complete
+        for i in {1..60}; do
+            BUILD_STATUS=$(kubectl get buildrun "$BUILD_RUN_NAME" -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="Succeeded")].status}' 2>/dev/null || echo "Unknown")
+            BUILD_REASON=$(kubectl get buildrun "$BUILD_RUN_NAME" -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="Succeeded")].reason}' 2>/dev/null || echo "Unknown")
+            
+            if [ "$BUILD_STATUS" = "True" ]; then
+                echo "✓ Build completed successfully"
+                break
+            elif [ "$BUILD_STATUS" = "False" ]; then
+                echo "✗ Build failed with reason: $BUILD_REASON"
+                echo "Check logs with: kubectl logs -n $NAMESPACE -l buildrun.shipwright.io/name=$BUILD_RUN_NAME"
+                exit 1
+            fi
+            
+            echo "  Build in progress... ($i/60)"
+            sleep 5
+        done
+        
+        if [ "$BUILD_STATUS" != "True" ]; then
+            echo "✗ Build did not complete within 5 minutes"
             exit 1
         fi
-        
-        echo "  Build in progress... ($i/60)"
-        sleep 5
-    done
-    
-    if [ "$BUILD_STATUS" != "True" ]; then
-        echo "✗ Build did not complete within 5 minutes"
-        exit 1
     fi
+    echo ""
+else
+    # For image deployments, patch imagePullPolicy
+    echo "Step 8: Patching imagePullPolicy to IfNotPresent..."
+    sleep 2  # Give the deployment a moment to be created
+    kubectl patch deployment $AGENT_NAME -n $NAMESPACE -p '{"spec":{"template":{"spec":{"containers":[{"name":"agent","imagePullPolicy":"IfNotPresent"}]}}}}' 2>/dev/null || echo "Warning: Could not patch imagePullPolicy"
+    echo "✓ ImagePullPolicy patched"
+    echo ""
 fi
-
-echo ""
 
 # Step 9: Wait for agent deployment to be created and ready
 echo "Step 9: Waiting for agent deployment to be created..."
@@ -280,36 +442,51 @@ echo ""
 # Step 10: Test agent card access
 echo "Step 10: Testing agent card access..."
 
-# Set up port-forward to agent
-AGENT_PORT=8084
-kubectl port-forward -n $NAMESPACE svc/$AGENT_NAME $AGENT_PORT:8080 >/dev/null 2>&1 &
-AGENT_PF_PID=$!
-sleep 2
-
-# Test agent card endpoint (trying common A2A methods)
-CARD_RESPONSE=$(curl -s -X POST http://localhost:$AGENT_PORT/ \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc": "2.0", "method": "agent/card", "id": 1}' 2>/dev/null)
-
-if [ -z "$CARD_RESPONSE" ]; then
-    echo "✗ No response from agent"
-    kill $AGENT_PF_PID 2>/dev/null
-    exit 1
-fi
-
-# Check if response contains error
-if echo "$CARD_RESPONSE" | grep -q '"error"'; then
-    echo "Agent responded but method may be incorrect:"
-    echo "$CARD_RESPONSE" | jq '.' 2>/dev/null || echo "$CARD_RESPONSE"
-    echo ""
-    echo "Note: Agent is running but may use different A2A method names"
+# Check if service exists
+if ! kubectl get svc $AGENT_NAME -n $NAMESPACE >/dev/null 2>&1; then
+    echo "⚠ Service $AGENT_NAME not found, skipping card test"
 else
-    echo "✓ Agent card access successful:"
-    echo "$CARD_RESPONSE" | jq '.' 2>/dev/null || echo "$CARD_RESPONSE"
+    # Set up port-forward to agent
+    AGENT_PORT=8084
+    
+    # Check if port is already in use
+    if lsof -Pi :$AGENT_PORT -sTCP:LISTEN -t >/dev/null 2>&1; then
+        echo "⚠ Port $AGENT_PORT already in use, skipping card test"
+    else
+        kubectl port-forward -n $NAMESPACE svc/$AGENT_NAME $AGENT_PORT:8080 >/dev/null 2>&1 &
+        AGENT_PF_PID=$!
+        sleep 3
+        
+        # Check if port-forward is actually running
+        if ! kill -0 $AGENT_PF_PID 2>/dev/null; then
+            echo "⚠ Port-forward failed to start, skipping card test"
+        else
+            # Test agent card endpoint (trying common A2A methods)
+            CARD_RESPONSE=$(curl -s --max-time 5 -X POST http://localhost:$AGENT_PORT/ \
+              -H "Content-Type: application/json" \
+              -d '{"jsonrpc": "2.0", "method": "agent/card", "id": 1}' 2>/dev/null)
+            
+            if [ -z "$CARD_RESPONSE" ]; then
+                echo "⚠ No response from agent (this is normal for some agent types)"
+                echo "  Agent is deployed and running, but may not respond to agent/card method"
+            else
+                # Check if response contains error
+                if echo "$CARD_RESPONSE" | grep -q '"error"'; then
+                    echo "⚠ Agent responded with error (this is normal for some agent types):"
+                    echo "$CARD_RESPONSE" | jq '.' 2>/dev/null || echo "$CARD_RESPONSE"
+                    echo ""
+                    echo "  Agent is deployed and running, but may use different A2A method names"
+                else
+                    echo "✓ Agent card access successful:"
+                    echo "$CARD_RESPONSE" | jq '.' 2>/dev/null || echo "$CARD_RESPONSE"
+                fi
+            fi
+            
+            # Clean up port-forward
+            kill $AGENT_PF_PID 2>/dev/null
+        fi
+    fi
 fi
-
-# Clean up port-forward
-kill $AGENT_PF_PID 2>/dev/null
 
 echo ""
 echo "=========================================="

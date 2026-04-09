@@ -1,9 +1,9 @@
 #!/bin/bash
-# Configure agent and benchmark environment settings
-# Usage: ./configure-agent-environment.sh <benchmark-name> [model-name]
-# Example: ./configure-agent-environment.sh gsm8k
-# Example: ./configure-agent-environment.sh gsm8k Azure/gpt-4o-mini
-# This script updates the Kubernetes secret and environment variables for both agent and benchmark
+# Configure benchmark environment settings
+# Usage: ./configure-benchmark.sh <benchmark-name> [model-name]
+# Example: ./configure-benchmark.sh gsm8k
+# Example: ./configure-benchmark.sh tau2 Azure/gpt-4o-mini
+# This script updates the Kubernetes secret and environment variables for the benchmark
 
 set -e
 
@@ -14,18 +14,16 @@ if [ -z "$BENCHMARK_NAME" ]; then
     echo "Error: Benchmark name is required"
     echo "Usage: $0 <benchmark-name> [model-name]"
     echo "Example: $0 gsm8k"
-    echo "Example: $0 gsm8k Azure/gpt-4o-mini"
+    echo "Example: $0 tau2 Azure/gpt-4o-mini"
     exit 1
 fi
 
 NAMESPACE="team1"
-AGENT_NAME="generic-agent-internal-${BENCHMARK_NAME}"
 BENCHMARK_DEPLOYMENT="exgentic-mcp-${BENCHMARK_NAME}"
 
 echo "=========================================="
-echo "Configuring Environment"
+echo "Configuring Benchmark Environment"
 echo "=========================================="
-echo "Agent: $AGENT_NAME"
 echo "Benchmark: $BENCHMARK_DEPLOYMENT"
 echo "Model: $MODEL_NAME"
 echo ""
@@ -53,50 +51,13 @@ kubectl patch secret openai-secret -n $NAMESPACE --type='json' -p="[
 echo "✓ Secret updated"
 echo ""
 
-echo "=========================================="
-echo "AGENT CONFIGURATION"
-echo "=========================================="
-echo ""
-
-# Step 2: Update agent deployment with Azure OpenAI settings
-echo "Step 2: Updating agent deployment with Azure OpenAI settings..."
+# Step 2: Update benchmark deployment with Azure OpenAI settings
+echo "Step 2: Updating benchmark deployment with Azure OpenAI settings..."
 
 if [ -z "$OPENAI_API_BASE" ]; then
     echo "Error: OPENAI_API_BASE environment variable is not set"
     exit 1
 fi
-
-# Use kubectl set env to update environment variables
-kubectl set env deployment/$AGENT_NAME -n $NAMESPACE \
-    LLM_API_BASE="$OPENAI_API_BASE" \
-    OPENAI_API_BASE="$OPENAI_API_BASE" \
-    LLM_MODEL="$MODEL_NAME"
-
-echo "✓ Agent environment variables updated"
-echo ""
-
-# Step 3: Wait for agent rollout
-echo "Step 3: Waiting for agent deployment rollout..."
-kubectl rollout status deployment/$AGENT_NAME -n $NAMESPACE --timeout=120s
-
-echo "✓ Agent rollout complete"
-echo ""
-
-echo "Agent configuration applied:"
-echo "  Deployment: $AGENT_NAME"
-echo "  LLM_API_BASE: $OPENAI_API_BASE"
-echo "  OPENAI_API_BASE: $OPENAI_API_BASE"
-echo "  LLM_MODEL: $MODEL_NAME"
-echo "  OPENAI_API_KEY: (updated secret from env var)"
-echo ""
-
-echo "=========================================="
-echo "BENCHMARK CONFIGURATION"
-echo "=========================================="
-echo ""
-
-# Step 4: Update benchmark deployment with Azure OpenAI settings
-echo "Step 4: Updating benchmark deployment with Azure OpenAI settings..."
 
 # Check if benchmark deployment exists
 if kubectl get deployment $BENCHMARK_DEPLOYMENT -n $NAMESPACE >/dev/null 2>&1; then
@@ -122,8 +83,8 @@ if kubectl get deployment $BENCHMARK_DEPLOYMENT -n $NAMESPACE >/dev/null 2>&1; t
     
     echo ""
     
-    # Step 5: Wait for benchmark rollout
-    echo "Step 5: Waiting for benchmark deployment rollout..."
+    # Step 3: Wait for benchmark rollout
+    echo "Step 3: Waiting for benchmark deployment rollout..."
     kubectl rollout status deployment/$BENCHMARK_DEPLOYMENT -n $NAMESPACE --timeout=120s
     echo "✓ Benchmark rollout complete"
     echo ""
@@ -137,13 +98,13 @@ if kubectl get deployment $BENCHMARK_DEPLOYMENT -n $NAMESPACE >/dev/null 2>&1; t
     fi
     echo "  OPENAI_API_KEY: (updated secret from env var)"
 else
-    echo "⚠ Benchmark deployment not found, skipping"
+    echo "✗ Benchmark deployment not found: $BENCHMARK_DEPLOYMENT"
+    exit 1
 fi
 
 echo ""
-
 echo "=========================================="
-echo "Configuration Complete!"
+echo "Benchmark Configuration Complete!"
 echo "=========================================="
 echo ""
 
