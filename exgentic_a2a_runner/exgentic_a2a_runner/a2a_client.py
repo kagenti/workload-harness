@@ -4,6 +4,7 @@ Implements the A2A protocol for sending prompts and receiving responses using JS
 """
 
 import logging
+import threading
 import time
 import uuid
 from typing import Any, Dict, Optional
@@ -26,23 +27,40 @@ class A2AProxyClient:
             config: A2A configuration
         """
         self.config = config
-        self.session = requests.Session()
-
+        self._local = threading.local()
+        
+        # Fetch agent card and determine RPC URL (using temporary session)
+        temp_session = self._create_session()
+        try:
+            self.rpc_url = self._discover_rpc_url_with_session(temp_session)
+            logger.info(f"A2A client initialized with RPC URL: {self.rpc_url}")
+        finally:
+            temp_session.close()
+    
+    def _create_session(self) -> requests.Session:
+        """Create a new requests session with proper configuration."""
+        session = requests.Session()
+        
         # Set default headers
-        self.session.headers.update(
+        session.headers.update(
             {
                 "Content-Type": "application/json",
                 "Accept": "application/json",
             }
         )
-
+        
         # Set auth token if provided
-        if config.auth_token:
-            self.session.headers["Authorization"] = f"Bearer {config.auth_token}"
-
-        # Fetch agent card and determine RPC URL
-        self.rpc_url = self._discover_rpc_url()
-        logger.info(f"A2A client initialized with RPC URL: {self.rpc_url}")
+        if self.config.auth_token:
+            session.headers["Authorization"] = f"Bearer {self.config.auth_token}"
+        
+        return session
+    
+    @property
+    def session(self) -> requests.Session:
+        """Get thread-local session, creating one if needed."""
+        if not hasattr(self._local, 'session'):
+            self._local.session = self._create_session()
+        return self._local.session
 
     def _normalize_endpoint_path(self) -> str:
         """Normalize configured endpoint path to '/path' format."""
@@ -57,8 +75,11 @@ class A2AProxyClient:
         """Build RPC URL by appending configured endpoint path to a base URL."""
         return base_url.rstrip("/") + self._normalize_endpoint_path()
 
-    def _get_agent_card(self) -> Dict[str, Any]:
+    def _get_agent_card_with_session(self, session: requests.Session) -> Dict[str, Any]:
         """Fetch the agent card from the standard discovery location.
+
+        Args:
+            session: Requests session to use
 
         Returns:
             Agent card as dict
@@ -70,7 +91,7 @@ class A2AProxyClient:
         logger.debug(f"Fetching agent card from {card_url}")
 
         try:
-            response = self.session.get(
+            response = session.get(
                 card_url,
                 timeout=30,
                 verify=self.config.verify_tls,
@@ -81,19 +102,22 @@ class A2AProxyClient:
             logger.warning(f"Failed to fetch agent card: {e}")
             raise
 
-    def _discover_rpc_url(self) -> str:
+    def _discover_rpc_url_with_session(self, session: requests.Session) -> str:
         """Discover the JSON-RPC endpoint URL from the agent card.
 
         Always uses the configured base_url to build the RPC URL, ignoring
         the URL from the agent card. This ensures we use the correct URL
         when port-forwarding or proxying.
 
+        Args:
+            session: Requests session to use
+
         Returns:
             JSON-RPC endpoint URL
         """
         try:
             # Fetch agent card for validation, but don't use its URL
-            card = self._get_agent_card()
+            card = self._get_agent_card_with_session(session)
             service_url = card.get("url")
             
             if service_url:

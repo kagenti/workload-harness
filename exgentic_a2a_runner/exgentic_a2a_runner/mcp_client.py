@@ -5,6 +5,7 @@ Uses streamable HTTP transport to interact with the Exgentic benchmark server.
 
 import asyncio
 import logging
+import threading
 from typing import Any, Dict, Optional, Tuple
 
 from mcp import ClientSession
@@ -16,7 +17,11 @@ logger = logging.getLogger(__name__)
 
 
 class MCPClient:
-    """Client for MCP protocol communication with Exgentic server via streamable HTTP."""
+    """Client for MCP protocol communication with Exgentic server via streamable HTTP.
+    
+    This client is thread-safe and maintains separate async event loops and MCP sessions
+    for each thread to avoid connection conflicts.
+    """
 
     def __init__(self, config: ExgenticConfig):
         """Initialize MCP client.
@@ -26,10 +31,22 @@ class MCPClient:
         """
         self.config = config
         self.mcp_url = config.mcp_server_url
-        self.session: Optional[ClientSession] = None
+        self._local = threading.local()
         self._initialized = False
 
         logger.info(f"Initialized MCP client for {self.mcp_url}")
+    
+    def _get_event_loop(self) -> asyncio.AbstractEventLoop:
+        """Get or create thread-local event loop."""
+        if not hasattr(self._local, 'loop'):
+            self._local.loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._local.loop)
+        return self._local.loop
+    
+    def _run_async(self, coro):
+        """Run async coroutine in thread-local event loop."""
+        loop = self._get_event_loop()
+        return loop.run_until_complete(coro)
 
     def initialize(self) -> None:
         """Initialize MCP client connection.
@@ -40,8 +57,9 @@ class MCPClient:
         logger.info(f"Initializing MCP client for {self.mcp_url}")
 
         try:
-            # Run async initialization
-            asyncio.run(self._async_initialize())
+            # Just verify connection works - don't keep persistent connection
+            # Each thread will create its own connection when needed
+            self._run_async(self._async_verify_connection())
             self._initialized = True
             logger.info("MCP client initialized successfully")
 
@@ -49,25 +67,24 @@ class MCPClient:
             logger.error(f"Failed to initialize MCP client: {e}")
             raise RuntimeError(f"MCP client initialization failed: {e}")
 
-    async def _async_initialize(self) -> None:
-        """Async initialization of MCP client."""
-        # Create streamable HTTP client
+    async def _async_verify_connection(self) -> None:
+        """Verify MCP server connection."""
         async with streamable_http_client(self.mcp_url) as (read, write, get_session_id):
             async with ClientSession(read, write) as session:
-                self.session = session
-                
-                # Initialize the session
                 await session.initialize()
-                
-                # List available tools to verify connection
                 tools_result = await session.list_tools()
                 logger.info(f"Connected to MCP server with {len(tools_result.tools)} tools available")
 
     def shutdown(self) -> None:
-        """Shutdown MCP client connection."""
+        """Shutdown MCP client connection and cleanup thread-local resources."""
         if self._initialized:
             try:
-                # Session cleanup is handled by context managers
+                # Close thread-local event loop if it exists
+                if hasattr(self._local, 'loop'):
+                    loop = self._local.loop
+                    if not loop.is_closed():
+                        loop.close()
+                    delattr(self._local, 'loop')
                 logger.info("MCP client shutdown complete")
             except Exception as e:
                 logger.warning(f"Error during MCP client shutdown: {e}")
@@ -88,7 +105,7 @@ class MCPClient:
         logger.info("Listing available tasks")
 
         try:
-            tasks = asyncio.run(self._async_list_tasks())
+            tasks = self._run_async(self._async_list_tasks())
             logger.info(f"Found {len(tasks)} tasks")
             return tasks
 
@@ -114,10 +131,9 @@ class MCPClient:
         logger.info("Creating new benchmark session")
 
         try:
-                  
             # At this point task_id is guaranteed to be a string
             assert task_id is not None, "task_id should not be None"
-            result = asyncio.run(self._async_create_session(task_id))
+            result = self._run_async(self._async_create_session(task_id))
             session_id = result["session_id"]
             task = result.get("task", result.get("task_description", ""))
             context = result.get("context")
@@ -195,7 +211,7 @@ class MCPClient:
         logger.info(f"Evaluating session {session_id}")
 
         try:
-            result = asyncio.run(self._async_evaluate_session(session_id))
+            result = self._run_async(self._async_evaluate_session(session_id))
             logger.info(f"Session {session_id} evaluation complete")
             return result
 
@@ -241,7 +257,7 @@ class MCPClient:
         logger.info(f"Deleting session {session_id}")
 
         try:
-            asyncio.run(self._async_delete_session(session_id))
+            self._run_async(self._async_delete_session(session_id))
             logger.info(f"Session {session_id} deleted")
 
         except Exception as e:
