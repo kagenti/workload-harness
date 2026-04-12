@@ -1,18 +1,73 @@
 #!/bin/bash
-# Deploy Exgentic benchmark to Kagenti cluster
-# Usage: ./deploy-benchmark.sh <benchmark-name> [keycloak-username] [keycloak-password]
-# Example: ./deploy-benchmark.sh gsm8k admin admin
+# Deploy and Configure Exgentic benchmark to Kagenti cluster
+# Usage: ./deploy-benchmark.sh <benchmark-name> [--model MODEL] [--keycloak-user USER] [--keycloak-pass PASS]
+# Example: ./deploy-benchmark.sh gsm8k
+# Example: ./deploy-benchmark.sh tau2 --model Azure/gpt-4o-mini
+# Example: ./deploy-benchmark.sh tau2 --model Azure/gpt-4o-mini --keycloak-user admin --keycloak-pass admin
 
 set -e
 
-BENCHMARK_NAME="$1"
-KEYCLOAK_USERNAME="${2:-admin}"
-KEYCLOAK_PASSWORD="${3:-admin}"
+# Default values
+MODEL_NAME="Azure/gpt-4o"
+KEYCLOAK_USERNAME="admin"
+KEYCLOAK_PASSWORD="admin"
+BENCHMARK_NAME=""
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --model)
+            MODEL_NAME="$2"
+            shift 2
+            ;;
+        --keycloak-user)
+            KEYCLOAK_USERNAME="$2"
+            shift 2
+            ;;
+        --keycloak-pass)
+            KEYCLOAK_PASSWORD="$2"
+            shift 2
+            ;;
+        -h|--help)
+            echo "Usage: $0 <benchmark-name> [OPTIONS]"
+            echo ""
+            echo "Arguments:"
+            echo "  <benchmark-name>           Benchmark name (required, e.g., gsm8k, tau2)"
+            echo ""
+            echo "Options:"
+            echo "  --model MODEL              Model name (default: Azure/gpt-4o)"
+            echo "  --keycloak-user USER       Keycloak username (default: admin)"
+            echo "  --keycloak-pass PASS       Keycloak password (default: admin)"
+            echo "  -h, --help                 Show this help message"
+            echo ""
+            echo "Examples:"
+            echo "  $0 gsm8k"
+            echo "  $0 tau2 --model Azure/gpt-4o-mini"
+            echo "  $0 tau2 --model Azure/gpt-4o-mini --keycloak-user admin --keycloak-pass admin"
+            exit 0
+            ;;
+        -*)
+            echo "Error: Unknown option: $1"
+            echo "Use --help for usage information"
+            exit 1
+            ;;
+        *)
+            if [ -z "$BENCHMARK_NAME" ]; then
+                BENCHMARK_NAME="$1"
+            else
+                echo "Error: Unexpected argument: $1"
+                echo "Use --help for usage information"
+                exit 1
+            fi
+            shift
+            ;;
+    esac
+done
 
 if [ -z "$BENCHMARK_NAME" ]; then
     echo "Error: Benchmark name is required"
-    echo "Usage: $0 <benchmark-name> [keycloak-username] [keycloak-password]"
-    echo "Example: $0 gsm8k admin admin"
+    echo "Usage: $0 <benchmark-name> [OPTIONS]"
+    echo "Use --help for more information"
     exit 1
 fi
 
@@ -27,6 +82,7 @@ KEYCLOAK_PORT=8002
 echo "=========================================="
 echo "Deploying Exgentic Benchmark: $BENCHMARK_NAME"
 echo "=========================================="
+echo "Model: $MODEL_NAME"
 echo ""
 
 # Step 1: Check if image exists locally
@@ -360,10 +416,7 @@ while [ $ELAPSED -lt $MAX_WAIT ]; do
             echo "Pod: $POD_NAME"
             echo "Service: $TOOL_NAME.$NAMESPACE:8000"
             echo ""
-            echo "To access the tool:"
-            echo "  kubectl port-forward -n $NAMESPACE svc/$TOOL_NAME 8000:8000"
-            echo ""
-            exit 0
+            break
         fi
     fi
     
@@ -372,11 +425,102 @@ while [ $ELAPSED -lt $MAX_WAIT ]; do
     ELAPSED=$((ELAPSED + WAIT_INTERVAL))
 done
 
-echo "Error: Tool did not become ready within ${MAX_WAIT}s"
+if [ $ELAPSED -ge $MAX_WAIT ]; then
+    echo "Error: Tool did not become ready within ${MAX_WAIT}s"
+    echo ""
+    echo "Check status with:"
+    echo "  kubectl get pods -n $NAMESPACE -l app.kubernetes.io/name=$TOOL_NAME"
+    echo "  kubectl logs -n $NAMESPACE -l app.kubernetes.io/name=$TOOL_NAME"
+    exit 1
+fi
+
 echo ""
-echo "Check status with:"
-echo "  kubectl get pods -n $NAMESPACE -l app.kubernetes.io/name=$TOOL_NAME"
-echo "  kubectl logs -n $NAMESPACE -l app.kubernetes.io/name=$TOOL_NAME"
-exit 1
+
+# Step 12: Configure benchmark environment settings
+echo "=========================================="
+echo "Configuring Benchmark Environment"
+echo "=========================================="
+echo ""
+
+# Step 12.1: Update the openai-secret with current OPENAI_API_KEY
+echo "Step 12.1: Updating openai-secret with OPENAI_API_KEY..."
+
+if [ -z "$OPENAI_API_KEY" ]; then
+    echo "Warning: OPENAI_API_KEY environment variable is not set"
+    echo "Skipping secret update"
+else
+    # Encode the API key in base64
+    ENCODED_KEY=$(echo -n "$OPENAI_API_KEY" | base64)
+    
+    # Patch the secret
+    kubectl patch secret openai-secret -n $NAMESPACE --type='json' -p="[
+      {
+        \"op\": \"replace\",
+        \"path\": \"/data/apikey\",
+        \"value\": \"$ENCODED_KEY\"
+      }
+    ]" 2>/dev/null && echo "✓ Secret updated" || echo "Warning: Could not update secret"
+fi
+
+echo ""
+
+# Step 12.2: Update benchmark deployment with Azure OpenAI settings
+echo "Step 12.2: Updating benchmark deployment with Azure OpenAI settings..."
+
+if [ -z "$OPENAI_API_BASE" ]; then
+    echo "Warning: OPENAI_API_BASE environment variable is not set"
+    echo "Skipping environment variable configuration"
+else
+    # Set memory limit to 3GB
+    kubectl set resources deployment/$TOOL_NAME -n $NAMESPACE \
+        --limits=memory=3Gi 2>/dev/null && echo "✓ Benchmark memory limit set to 3Gi" || echo "Warning: Could not set memory limit"
+    
+    echo ""
+    
+    # Set OPENAI_API_BASE for all benchmarks
+    kubectl set env deployment/$TOOL_NAME -n $NAMESPACE \
+        OPENAI_API_BASE="$OPENAI_API_BASE" 2>/dev/null || echo "Warning: Could not set OPENAI_API_BASE"
+    
+    # Only set EXGENTIC_SET_BENCHMARK_USER_SIMULATOR_MODEL for tau benchmarks
+    if [[ "$BENCHMARK_NAME" == tau* ]]; then
+        kubectl set env deployment/$TOOL_NAME -n $NAMESPACE \
+            EXGENTIC_SET_BENCHMARK_USER_SIMULATOR_MODEL="openai/$MODEL_NAME" 2>/dev/null || echo "Warning: Could not set user simulator model"
+        echo "✓ Benchmark environment variables updated (including user simulator model for tau benchmark)"
+    else
+        echo "✓ Benchmark environment variables updated"
+    fi
+    
+    echo ""
+    
+    # Step 12.3: Wait for benchmark rollout
+    echo "Step 12.3: Waiting for benchmark deployment rollout..."
+    kubectl rollout status deployment/$TOOL_NAME -n $NAMESPACE --timeout=120s
+    echo "✓ Benchmark rollout complete"
+    echo ""
+fi
+
+echo ""
+echo "=========================================="
+echo "Deployment and Configuration Complete!"
+echo "=========================================="
+echo ""
+echo "Benchmark configuration:"
+echo "  Deployment: $TOOL_NAME"
+echo "  Namespace: $NAMESPACE"
+echo "  Model: $MODEL_NAME"
+if [ -n "$OPENAI_API_BASE" ]; then
+    echo "  Memory Limit: 3Gi"
+    echo "  OPENAI_API_BASE: $OPENAI_API_BASE"
+    if [[ "$BENCHMARK_NAME" == tau* ]]; then
+        echo "  EXGENTIC_SET_BENCHMARK_USER_SIMULATOR_MODEL: openai/$MODEL_NAME"
+    fi
+    if [ -n "$OPENAI_API_KEY" ]; then
+        echo "  OPENAI_API_KEY: (updated from env var)"
+    fi
+fi
+echo ""
+echo "To access the tool:"
+echo "  kubectl port-forward -n $NAMESPACE svc/$TOOL_NAME 8000:8000"
+echo ""
 
 # Made with Bob

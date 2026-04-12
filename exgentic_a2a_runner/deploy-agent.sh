@@ -1,21 +1,75 @@
 #!/bin/bash
-# Deploy agent to Kagenti cluster via API
-# Usage: ./deploy-agent.sh <benchmark-name> <agent-name> <keycloak-username> <keycloak-password>
-# Example: ./deploy-agent.sh gsm8k generic_agent admin admin
-# Example: ./deploy-agent.sh gsm8k tool_calling admin admin
+# Deploy and Configure agent to Kagenti cluster via API
+# Usage: ./deploy-agent.sh <benchmark-name> <agent-name> [OPTIONS]
+# Example: ./deploy-agent.sh gsm8k generic_agent
+# Example: ./deploy-agent.sh tau2 tool_calling --model Azure/gpt-4o-mini
 
 set -e
 
+# Default values
+MODEL_NAME="Azure/gpt-4o"
+KEYCLOAK_USERNAME="admin"
+KEYCLOAK_PASSWORD="admin"
+BENCHMARK_NAME=""
+AGENT_NAME_INPUT=""
+
+# Parse arguments
+POSITIONAL_ARGS=()
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --model)
+            MODEL_NAME="$2"
+            shift 2
+            ;;
+        --keycloak-user)
+            KEYCLOAK_USERNAME="$2"
+            shift 2
+            ;;
+        --keycloak-pass)
+            KEYCLOAK_PASSWORD="$2"
+            shift 2
+            ;;
+        -h|--help)
+            echo "Usage: $0 <benchmark-name> <agent-name> [OPTIONS]"
+            echo ""
+            echo "Arguments:"
+            echo "  <benchmark-name>           Benchmark name (required, e.g., gsm8k, tau2)"
+            echo "  <agent-name>               Agent name (required, e.g., tool_calling, generic_agent)"
+            echo ""
+            echo "Options:"
+            echo "  --model MODEL              Model name (default: Azure/gpt-4o)"
+            echo "  --keycloak-user USER       Keycloak username (default: admin)"
+            echo "  --keycloak-pass PASS       Keycloak password (default: admin)"
+            echo "  -h, --help                 Show this help message"
+            echo ""
+            echo "Examples:"
+            echo "  $0 gsm8k generic_agent"
+            echo "  $0 tau2 tool_calling --model Azure/gpt-4o-mini"
+            echo "  $0 tau2 tool_calling --model Azure/gpt-4o-mini --keycloak-user admin --keycloak-pass admin"
+            exit 0
+            ;;
+        -*)
+            echo "Error: Unknown option: $1"
+            echo "Use --help for usage information"
+            exit 1
+            ;;
+        *)
+            POSITIONAL_ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
+
+# Restore positional parameters
+set -- "${POSITIONAL_ARGS[@]}"
+
 BENCHMARK_NAME="$1"
 AGENT_NAME_INPUT="$2"
-KEYCLOAK_USERNAME="${3:-admin}"
-KEYCLOAK_PASSWORD="${4:-admin}"
 
 if [ -z "$BENCHMARK_NAME" ] || [ -z "$AGENT_NAME_INPUT" ]; then
     echo "Error: Benchmark name and agent name are required"
-    echo "Usage: $0 <benchmark-name> <agent-name> [keycloak-username] [keycloak-password]"
-    echo "Example: $0 gsm8k generic_agent admin admin"
-    echo "Example: $0 gsm8k tool_calling admin admin"
+    echo "Usage: $0 <benchmark-name> <agent-name> [OPTIONS]"
+    echo "Use --help for more information"
     exit 1
 fi
 
@@ -55,6 +109,7 @@ else
     echo "Deploying Exgentic Agent: $AGENT_NAME"
     echo "From image: $IMAGE_NAME"
 fi
+echo "Model: $MODEL_NAME"
 echo "=========================================="
 echo ""
 
@@ -499,12 +554,80 @@ else
 fi
 
 echo ""
+
+# Step 11: Configure agent environment settings
 echo "=========================================="
-echo "Deployment Complete!"
+echo "Configuring Agent Environment"
 echo "=========================================="
 echo ""
-echo "Agent: $AGENT_NAME.$NAMESPACE:8080"
-echo "Tool: $TOOL_NAME.$NAMESPACE:8000"
+
+# Step 11.1: Update the openai-secret with current OPENAI_API_KEY
+echo "Step 11.1: Updating openai-secret with OPENAI_API_KEY..."
+
+if [ -z "$OPENAI_API_KEY" ]; then
+    echo "Warning: OPENAI_API_KEY environment variable is not set"
+    echo "Skipping secret update"
+else
+    # Encode the API key in base64
+    ENCODED_KEY=$(echo -n "$OPENAI_API_KEY" | base64)
+    
+    # Patch the secret
+    kubectl patch secret openai-secret -n $NAMESPACE --type='json' -p="[
+      {
+        \"op\": \"replace\",
+        \"path\": \"/data/apikey\",
+        \"value\": \"$ENCODED_KEY\"
+      }
+    ]" 2>/dev/null && echo "✓ Secret updated" || echo "Warning: Could not update secret"
+fi
+
+echo ""
+
+# Step 11.2: Update agent deployment with Azure OpenAI settings
+echo "Step 11.2: Updating agent deployment with Azure OpenAI settings..."
+
+if [ -z "$OPENAI_API_BASE" ]; then
+    echo "Warning: OPENAI_API_BASE environment variable is not set"
+    echo "Skipping environment variable configuration"
+else
+    # Use kubectl set env to update environment variables
+    kubectl set env deployment/$AGENT_NAME -n $NAMESPACE \
+        LLM_API_BASE="$OPENAI_API_BASE" \
+        OPENAI_API_BASE="$OPENAI_API_BASE" \
+        LLM_MODEL="$MODEL_NAME" \
+        EXGENTIC_SET_AGENT_MODEL="$MODEL_NAME" 2>/dev/null || echo "Warning: Could not set environment variables"
+
+    echo "✓ Agent environment variables updated"
+    echo ""
+
+    # Step 11.3: Wait for agent rollout
+    echo "Step 11.3: Waiting for agent deployment rollout..."
+    kubectl rollout status deployment/$AGENT_NAME -n $NAMESPACE --timeout=120s
+
+    echo "✓ Agent rollout complete"
+    echo ""
+fi
+
+echo ""
+echo "=========================================="
+echo "Deployment and Configuration Complete!"
+echo "=========================================="
+echo ""
+echo "Agent configuration:"
+echo "  Deployment: $AGENT_NAME"
+echo "  Namespace: $NAMESPACE"
+echo "  Service: $AGENT_NAME.$NAMESPACE:8080"
+echo "  Tool: $TOOL_NAME.$NAMESPACE:8000"
+echo "  Model: $MODEL_NAME"
+if [ -n "$OPENAI_API_BASE" ]; then
+    echo "  LLM_API_BASE: $OPENAI_API_BASE"
+    echo "  OPENAI_API_BASE: $OPENAI_API_BASE"
+    echo "  LLM_MODEL: $MODEL_NAME"
+    echo "  EXGENTIC_SET_AGENT_MODEL: $MODEL_NAME"
+    if [ -n "$OPENAI_API_KEY" ]; then
+        echo "  OPENAI_API_KEY: (updated from env var)"
+    fi
+fi
 echo ""
 echo "Agent is ready and accessible!"
 echo ""

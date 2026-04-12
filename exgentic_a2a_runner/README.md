@@ -55,13 +55,15 @@ deployments/ansible/run-install.sh --env dev --preload --extra-vars '{"container
 ```
 
 
-#### Clone and build exgentic mcp server local images
+#### Clone and build exgentic mcp server and agent local images
 ```bash
 git clone git@github.com:yoavkatz/agent-examples.git
 cd agent-examples
 git checkout feature/exgentic-mcp-server
 cd mcp/exgentic_benchmarks
-./build.sh appworld latest # can also use tau2, gsm8k
+./build.sh tau2  # can also use appworld, gsm8k
+cd ../../a2a/exgentic_agent
+./build.sh tool_calling
 ```
 
 #### Deploy agent and MCP server per benchmark
@@ -74,30 +76,64 @@ cd exgentic_a2a_runner
 uv sync --python 3.12
 source .venv/bin/activate
 
-# Deploy MCP server using Kagenti Tool API based on local benchmark image created above
+# Deploy and configure MCP server using Kagenti Tool API
+# This script now combines deployment and configuration in one step
 ./deploy-benchmark.sh tau2
 
-# Deploy an agent using Kagenti Agent API that connects to the benchmark MCP
+# Deploy and configure agent using Kagenti Agent API
+# This script now combines deployment and configuration in one step
 ./deploy-agent.sh tau2 tool_calling
-
-# Configure the agent deployment:
-# Updates OPENAI_API_BASE, OPENAI_API_KEY, and model settings
-./configure-agent.sh tau2 tool_calling Azure/gpt-4o
-
-# Configure the benchmark deployment:
-# Sets memory limit to 3GB and configures OpenAI settings
-# For appworld, use gemini-2.5-pro or other models, because OpenAI models
-# cannot handle the number of tools in appworld without special tool shortlisting
-./configure-benchmark.sh tau2 Azure/gpt-4o
 ```
 
-**Note:** The deploy scripts accept optional Keycloak credentials (default: admin/admin):
+**Note:** Both deployment scripts now accept named parameters for optional settings:
+
+**Benchmark Deployment:**
 ```bash
-./deploy-benchmark.sh <benchmark-name> [keycloak-username] [keycloak-password]
-./deploy-agent.sh <benchmark-name> <agent-name> [keycloak-username] [keycloak-password]
+# Basic deployment with defaults (model: Azure/gpt-4o, keycloak: admin/admin)
+./deploy-benchmark.sh tau2
+
+# Deploy with custom model
+./deploy-benchmark.sh tau2 --model Azure/gpt-4o-mini
+
+# Deploy with custom Keycloak credentials
+./deploy-benchmark.sh tau2 --model Azure/gpt-4o-mini --keycloak-user admin --keycloak-pass admin
+
+# Show help
+./deploy-benchmark.sh --help
+```
+
+**Agent Deployment:**
+```bash
+# Basic deployment with defaults (model: Azure/gpt-4o, keycloak: admin/admin)
+./deploy-agent.sh tau2 tool_calling
+
+# Deploy with custom model
+./deploy-agent.sh tau2 tool_calling --model Azure/gpt-4o-mini
+
+# Deploy with custom Keycloak credentials
+./deploy-agent.sh tau2 tool_calling --model Azure/gpt-4o-mini --keycloak-user admin --keycloak-pass admin
+
+# Show help
+./deploy-agent.sh --help
 ```
 
 **Agent Naming:** Underscores in agent names are automatically converted to hyphens for Kubernetes compatibility (e.g., `tool_calling` becomes `tool-calling`).
+
+**Important:** Both deployment scripts now combine deployment and configuration steps:
+
+**`deploy-benchmark.sh`** will:
+1. Deploy the MCP server to the Kagenti cluster
+2. Automatically configure environment variables (OPENAI_API_BASE, OPENAI_API_KEY)
+3. Set memory limits and model settings
+4. Wait for the deployment to be ready
+
+**`deploy-agent.sh`** will:
+1. Deploy the agent to the Kagenti cluster
+2. Automatically configure environment variables (OPENAI_API_BASE, OPENAI_API_KEY, LLM_MODEL)
+3. Set model settings (LLM_MODEL, EXGENTIC_SET_AGENT_MODEL)
+4. Wait for the deployment to be ready
+
+For appworld benchmark, use gemini-2.5-pro or other models, because OpenAI models cannot handle the number of tools in appworld without special tool shortlisting.
 
 
 ## Configuration
