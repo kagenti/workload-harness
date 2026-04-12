@@ -549,8 +549,17 @@ fi
 
 echo ""
 
-# Step 11.2: Wait for deployment to stabilize
-echo "Step 11.2: Waiting for deployment to stabilize..."
+# Step 11.2: Set memory limit
+echo "Step 11.2: Setting memory limit..."
+
+# Set memory limit to 3GB
+kubectl set resources deployment/$AGENT_NAME -n $NAMESPACE \
+    --limits=memory=3Gi 2>/dev/null && echo "✓ Agent memory limit set to 3Gi" || echo "Warning: Could not set memory limit"
+
+echo ""
+
+# Step 11.3: Wait for deployment to stabilize
+echo "Step 11.3: Waiting for deployment to stabilize..."
 kubectl rollout status deployment/$AGENT_NAME -n $NAMESPACE --timeout=120s
 echo "✓ Deployment stable"
 echo ""
@@ -615,6 +624,7 @@ echo "  Namespace: $NAMESPACE"
 echo "  Service: $AGENT_NAME.$NAMESPACE:8080"
 echo "  Tool: $TOOL_NAME.$NAMESPACE:8000"
 echo "  Model: $MODEL_NAME"
+echo "  Memory Limit: 3Gi"
 if [ -n "$OPENAI_API_BASE" ]; then
     echo "  LLM_API_BASE: $OPENAI_API_BASE"
     echo "  OPENAI_API_BASE: $OPENAI_API_BASE"
