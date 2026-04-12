@@ -250,33 +250,45 @@ class MCPClient:
 
     async def _async_delete_session(self, session_id: str) -> None:
         """Async session deletion."""
-        async with streamable_http_client(self.mcp_url) as (read, write, get_session_id):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                
-                # Call delete_session tool
-                result = await session.call_tool(
-                    "delete_session",
-                    arguments={"session_id": session_id}
-                )
-                
-                # Check if the operation was successful
-                if not result.content:
-                    raise RuntimeError("Empty response from delete_session")
-                
-                # Check if it's an error response
-                if result.isError:
-                    content = result.content[0]
-                    error_msg = content.text if hasattr(content, 'text') else str(content)
-                    raise RuntimeError(f"Failed to delete session: {error_msg}")
-                
-                # Verify success response
-                content = result.content[0]
-                if hasattr(content, 'text'):
-                    import json
-                    response = json.loads(content.text)
-                    # Check for either "success" field or "status" field
-                    status = response.get("status", "")
-                    if not (status == "success"):
-                        raise RuntimeError(f"Session deletion failed: {response}")
+        result = None
+        try:
+            async with streamable_http_client(self.mcp_url) as (read, write, get_session_id):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+
+                    # Call delete_session tool
+                    result = await session.call_tool(
+                        "delete_session",
+                        arguments={"session_id": session_id}
+                    )
+        except BaseExceptionGroup:  # type: ignore[misc]
+            # anyio's TaskGroup wraps background task exceptions in BaseExceptionGroup
+            # This occurs when the GET SSE stream fails (e.g., session already cleaned up server-side)
+            # The delete_session call has already completed at this point, so we ignore it.
+            pass
+
+        # Check if the operation was successful
+        if result is None or not result.content:
+            raise RuntimeError("Empty response from delete_session")
+
+        # Check if it's an error response
+        if result.isError:
+            content = result.content[0]
+            error_msg = content.text if hasattr(content, 'text') else str(content)
+            raise RuntimeError(f"Failed to delete session: {error_msg}")
+
+        # Verify success response
+        content = result.content[0]
+        if hasattr(content, 'text'):
+            import json
+            response = json.loads(content.text)
+            status = response.get("status", "")
+            if status != "success":
+                # Treat "already closed" or "not found" as success — evaluate_session
+                # may have already closed the underlying session before delete is called.
+                error_msg = response.get("error", "")
+                if "client has been closed" in error_msg or "No session found" in error_msg:
+                    logger.debug(f"Session {session_id} already cleaned up: {error_msg}")
+                    return
+                raise RuntimeError(f"Session deletion failed: {response}")
 
