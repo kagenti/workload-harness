@@ -151,27 +151,27 @@ class OTELInstrumentation:
         )
 
         self.session_latency_histogram = self.meter.create_histogram(
-            name="exgentic_a2a_session_latency_ms",
-            description="Session processing latency in milliseconds",
-            unit="ms",
+            name="exgentic_a2a_session_latency_seconds",
+            description="Session processing latency in seconds",
+            unit="s",
         )
 
         self.evaluation_latency_histogram = self.meter.create_histogram(
-            name="exgentic_a2a_evaluation_latency_ms",
-            description="Session evaluation latency in milliseconds",
-            unit="ms",
+            name="exgentic_a2a_evaluation_latency_seconds",
+            description="Session evaluation latency in seconds",
+            unit="s",
         )
 
         self.session_creation_latency_histogram = self.meter.create_histogram(
-            name="exgentic_a2a_session_creation_latency_ms",
-            description="Session creation latency in milliseconds",
-            unit="ms",
+            name="exgentic_a2a_session_creation_latency_seconds",
+            description="Session creation latency in seconds",
+            unit="s",
         )
 
         self.a2a_latency_histogram = self.meter.create_histogram(
-            name="exgentic_a2a_a2a_latency_ms",
-            description="A2A request latency in milliseconds",
-            unit="ms",
+            name="exgentic_a2a_a2a_latency_seconds",
+            description="A2A request latency in seconds",
+            unit="s",
         )
 
         self.prompt_size_histogram = self.meter.create_histogram(
@@ -243,9 +243,9 @@ class OTELInstrumentation:
                     self.inflight_sessions_gauge.add(-1)
 
                 # Record session latency
-                latency_ms = (time.time() - start_time) * 1000
+                latency_seconds = time.time() - start_time
                 if self.session_latency_histogram:
-                    self.session_latency_histogram.record(latency_ms)
+                    self.session_latency_histogram.record(latency_seconds)
 
     @contextmanager
     def child_span(self, name: str) -> Iterator[trace.Span]:
@@ -274,18 +274,18 @@ class OTELInstrumentation:
     def record_a2a_request(
         self,
         span: trace.Span,
-        duration_ms: float,
+        duration_seconds: float,
     ) -> None:
         """Record A2A request metrics.
 
         Args:
             span: Current span
-            duration_ms: Request duration in milliseconds
+            duration_seconds: Request duration in seconds
         """
-        span.set_attribute("a2a.duration_ms", duration_ms)
+        span.set_attribute("a2a.duration_seconds", duration_seconds)
 
         if self.a2a_latency_histogram:
-            self.a2a_latency_histogram.record(duration_ms)
+            self.a2a_latency_histogram.record(duration_seconds)
 
     def record_response(self, span: trace.Span, response: str) -> None:
         """Record response information.
@@ -345,28 +345,28 @@ class OTELInstrumentation:
         if self.errors_counter:
             self.errors_counter.add(1, {"error_type": error_type})
 
-    def record_evaluation(self, span: trace.Span, duration_ms: float) -> None:
+    def record_evaluation(self, span: trace.Span, duration_seconds: float) -> None:
         """Record session evaluation metrics.
 
         Args:
             span: Current span
-            duration_ms: Evaluation duration in milliseconds
+            duration_seconds: Evaluation duration in seconds
         """
-        span.set_attribute("exgentic.evaluation_duration_ms", duration_ms)
+        span.set_attribute("exgentic.evaluation_duration_seconds", duration_seconds)
 
         if self.evaluation_latency_histogram:
-            self.evaluation_latency_histogram.record(duration_ms)
+            self.evaluation_latency_histogram.record(duration_seconds)
 
-    def record_session_creation(self, span: trace.Span, duration_ms: float) -> None:
+    def record_session_creation(self, span: trace.Span, duration_seconds: float) -> None:
         """Record session creation metrics.
 
         Args:
             span: Current span
-            duration_ms: Creation duration in milliseconds
+            duration_seconds: Creation duration in seconds
         """
-        span.set_attribute("exgentic.session_creation_duration_ms", duration_ms)
+        span.set_attribute("exgentic.session_creation_duration_seconds", duration_seconds)
 
         if self.session_creation_latency_histogram:
-            self.session_creation_latency_histogram.record(duration_ms)
+            self.session_creation_latency_histogram.record(duration_seconds)
 
 

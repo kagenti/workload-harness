@@ -39,14 +39,14 @@ class SessionResult:
         self,
         session_id: str,
         success: bool,
-        latency_ms: float,
+        latency_seconds: float,
         evaluation_result: bool,
         error: Optional[str] = None,
         response_chars: Optional[int] = None,
     ):
         self.session_id = session_id
         self.success = success
-        self.latency_ms = latency_ms
+        self.latency_seconds = latency_seconds
         self.evaluation_result = evaluation_result
         self.error = error
         self.response_chars = response_chars
@@ -77,7 +77,7 @@ class RunSummary:
         eval_succeeded = sum(1 for r in self.results if r.success and r.evaluation_result)
         eval_success_rate = (eval_succeeded / evaluated * 100) if evaluated > 0 else 0
 
-        latencies = [r.latency_ms for r in self.results]
+        latencies = [r.latency_seconds for r in self.results]
         avg_latency = sum(latencies) / len(latencies) if latencies else 0
 
         # Calculate percentiles
@@ -92,9 +92,9 @@ class RunSummary:
             "sessions_failed": failed,
             "evaluation_success_rate": eval_success_rate,
             "total_wall_time_seconds": total_time,
-            "average_latency_ms": avg_latency,
-            "p50_latency_ms": p50,
-            "p95_latency_ms": p95,
+            "average_latency_seconds": avg_latency,
+            "p50_latency_seconds": p50,
+            "p95_latency_seconds": p95,
         }
 
     def print_summary(self, max_parallel_sessions: int = 1) -> None:
@@ -114,9 +114,9 @@ class RunSummary:
         print(f"Sessions Failed:      {summary['sessions_failed']}")
         print(f"Evaluation Success:   {summary['evaluation_success_rate']:.1f}%")
         print(f"Total Wall Time:      {summary['total_wall_time_seconds']:.2f}s")
-        print(f"Average Latency:      {summary['average_latency_ms']:.2f}ms")
-        print(f"P50 Latency:          {summary['p50_latency_ms']:.2f}ms")
-        print(f"P95 Latency:          {summary['p95_latency_ms']:.2f}ms")
+        print(f"Average Latency:      {summary['average_latency_seconds']:.2f}s")
+        print(f"P50 Latency:          {summary['p50_latency_seconds']:.2f}s")
+        print(f"P95 Latency:          {summary['p95_latency_seconds']:.2f}s")
         print("=" * 60)
         
         # Print error table if there are any failures
@@ -205,15 +205,15 @@ class Runner:
                 a2a_start = time.time()
                 with self.otel.child_span("exgentic_a2a.a2a.send_prompt") as a2a_span:
                     response = self.a2a_client.send_prompt(prompt)
-                    a2a_duration_ms = (time.time() - a2a_start) * 1000
+                    a2a_duration_seconds = time.time() - a2a_start
                     # Record prompt and response on the send span
                     a2a_span.set_attribute("prompt.chars", len(prompt))
                     a2a_span.set_attribute("prompt.text", prompt)
                     self.otel.record_response(a2a_span, response)
-                    self.otel.record_a2a_request(a2a_span, a2a_duration_ms)
+                    self.otel.record_a2a_request(a2a_span, a2a_duration_seconds)
 
                 # Also record on parent span for backward compatibility
-                self.otel.record_a2a_request(span, a2a_duration_ms)
+                self.otel.record_a2a_request(span, a2a_duration_seconds)
                 self.otel.record_response(span, response)
 
                 if self.config.debug.log_response:
@@ -223,15 +223,15 @@ class Runner:
                 eval_start = time.time()
                 with self.otel.child_span("exgentic_a2a.mcp.evaluate_session") as eval_span:
                     evaluation_result = self.exgentic.evaluate_session(session_id)
-                    eval_duration_ms = (time.time() - eval_start) * 1000
+                    eval_duration_seconds = time.time() - eval_start
                     # Record evaluation result on the evaluate span
                     eval_span.set_attribute("exgentic.evaluation_result", evaluation_result)
-                    eval_span.set_attribute("exgentic.evaluation_duration_ms", eval_duration_ms)
+                    eval_span.set_attribute("exgentic.evaluation_duration_seconds", eval_duration_seconds)
                     if self.otel.evaluation_latency_histogram:
-                        self.otel.evaluation_latency_histogram.record(eval_duration_ms)
+                        self.otel.evaluation_latency_histogram.record(eval_duration_seconds)
                 
                 # Also record on parent span for backward compatibility
-                self.otel.record_evaluation(span, eval_duration_ms)
+                self.otel.record_evaluation(span, eval_duration_seconds)
 
                 # Delete session
                 with self.otel.child_span("exgentic_a2a.mcp.delete_session"):
@@ -240,16 +240,16 @@ class Runner:
                 # Record success
                 self.otel.record_success(span, evaluation_result)
 
-                latency_ms = (time.time() - start_time) * 1000
+                latency_seconds = time.time() - start_time
                 logger.info(
-                    f"Session {session_id} completed in {latency_ms:.2f}ms "
+                    f"Session {session_id} completed in {latency_seconds:.2f}s "
                     f"(evaluation: {'success' if evaluation_result else 'failed'})"
                 )
 
                 return SessionResult(
                     session_id=session_id,
                     success=True,
-                    latency_ms=latency_ms,
+                    latency_seconds=latency_seconds,
                     evaluation_result=evaluation_result,
                     response_chars=len(response),
                 )
@@ -271,12 +271,12 @@ class Runner:
                 # Record failure
                 self.otel.record_failure(span, e, error_type)
 
-                latency_ms = (time.time() - start_time) * 1000
+                latency_seconds = time.time() - start_time
 
                 return SessionResult(
                     session_id=session_id,
                     success=False,
-                    latency_ms=latency_ms,
+                    latency_seconds=latency_seconds,
                     evaluation_result=False,
                     error=f"{error_type}: {error_msg}",
                 )
@@ -302,8 +302,8 @@ class Runner:
                 logger.info("Processing sessions sequentially")
                 for session_data in self.exgentic.iterate_sessions(task_ids):
                     # Record session creation time
-                    creation_time_ms = (time.time() - session_data.created_at) * 1000
-                    logger.debug(f"Session creation took {creation_time_ms:.2f}ms")
+                    creation_time_seconds = time.time() - session_data.created_at
+                    logger.debug(f"Session creation took {creation_time_seconds:.2f}s")
                     
                     result = self.process_session(session_data)
                     self.summary.add_result(result)
@@ -347,7 +347,7 @@ class Runner:
                             result = SessionResult(
                                 session_id=session_data.session_id,
                                 success=False,
-                                latency_ms=0,
+                                latency_seconds=0,
                                 evaluation_result=False,
                                 error=str(e),
                             )
