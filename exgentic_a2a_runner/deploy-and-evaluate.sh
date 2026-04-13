@@ -102,7 +102,7 @@ echo ""
 echo "=========================================="
 echo "Step 1/3: Deploying Benchmark"
 echo "=========================================="
-"$SCRIPT_DIR/deploy-benchmark.sh" "$BENCHMARK_NAME" \
+"$SCRIPT_DIR/deploy-benchmark.sh" --benchmark "$BENCHMARK_NAME" \
     --model "$MODEL_NAME" \
     --keycloak-user "$KEYCLOAK_USERNAME" \
     --keycloak-pass "$KEYCLOAK_PASSWORD"
@@ -120,7 +120,7 @@ echo ""
 echo "=========================================="
 echo "Step 2/3: Deploying Agent"
 echo "=========================================="
-"$SCRIPT_DIR/deploy-agent.sh" "$BENCHMARK_NAME" "$AGENT_NAME" \
+"$SCRIPT_DIR/deploy-agent.sh" --benchmark "$BENCHMARK_NAME" --agent "$AGENT_NAME" \
     --model "$MODEL_NAME" \
     --keycloak-user "$KEYCLOAK_USERNAME" \
     --keycloak-pass "$KEYCLOAK_PASSWORD"
@@ -138,7 +138,7 @@ echo ""
 echo "=========================================="
 echo "Step 3/3: Running Evaluation"
 echo "=========================================="
-"$SCRIPT_DIR/evaluate_benchmark.sh" "$BENCHMARK_NAME" "$AGENT_NAME"
+"$SCRIPT_DIR/evaluate-benchmark.sh" --benchmark "$BENCHMARK_NAME" --agent "$AGENT_NAME"
 
 if [ $? -ne 0 ]; then
     echo "Error: Evaluation failed"

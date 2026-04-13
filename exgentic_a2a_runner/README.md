@@ -78,25 +78,25 @@ source .venv/bin/activate
 
 # Deploy and configure MCP server using Kagenti Tool API
 # This script now combines deployment and configuration in one step
-./deploy-benchmark.sh tau2
+./deploy-benchmark.sh --benchmark tau2
 
 # Deploy and configure agent using Kagenti Agent API
 # This script now combines deployment and configuration in one step
-./deploy-agent.sh tau2 tool_calling
+./deploy-agent.sh --benchmark tau2 --agent tool_calling
 ```
 
-**Note:** Both deployment scripts now accept named parameters for optional settings:
+**Note:** All deployment scripts now use named parameters:
 
 **Benchmark Deployment:**
 ```bash
-# Basic deployment with defaults (model: Azure/gpt-4o, keycloak: admin/admin)
-./deploy-benchmark.sh tau2
+# Basic deployment with defaults (model: Azure/gpt-4.1, keycloak: admin/admin)
+./deploy-benchmark.sh --benchmark tau2
 
 # Deploy with custom model
-./deploy-benchmark.sh tau2 --model Azure/gpt-4o-mini
+./deploy-benchmark.sh --benchmark tau2 --model Azure/gpt-4o-mini
 
 # Deploy with custom Keycloak credentials
-./deploy-benchmark.sh tau2 --model Azure/gpt-4o-mini --keycloak-user admin --keycloak-pass admin
+./deploy-benchmark.sh --benchmark tau2 --model Azure/gpt-4o-mini --keycloak-user admin --keycloak-pass admin
 
 # Show help
 ./deploy-benchmark.sh --help
@@ -104,14 +104,14 @@ source .venv/bin/activate
 
 **Agent Deployment:**
 ```bash
-# Basic deployment with defaults (model: Azure/gpt-4o, keycloak: admin/admin)
-./deploy-agent.sh tau2 tool_calling
+# Basic deployment with defaults (model: Azure/gpt-4.1, keycloak: admin/admin)
+./deploy-agent.sh --benchmark tau2 --agent tool_calling
 
 # Deploy with custom model
-./deploy-agent.sh tau2 tool_calling --model Azure/gpt-4o-mini
+./deploy-agent.sh --benchmark tau2 --agent tool_calling --model Azure/gpt-4o-mini
 
 # Deploy with custom Keycloak credentials
-./deploy-agent.sh tau2 tool_calling --model Azure/gpt-4o-mini --keycloak-user admin --keycloak-pass admin
+./deploy-agent.sh --benchmark tau2 --agent tool_calling --model Azure/gpt-4o-mini --keycloak-user admin --keycloak-pass admin
 
 # Show help
 ./deploy-agent.sh --help
@@ -187,9 +187,37 @@ Then edit the .env file as needed.
 
 ## Usage
 
+### All-in-One: Deploy and Evaluate
+
+The `deploy-and-evaluate.sh` script provides a convenient way to deploy both the benchmark and agent, then run the evaluation in a single command:
+
+```bash
+./deploy-and-evaluate.sh --benchmark tau2 --agent tool_calling
+```
+
+This script will:
+1. Deploy the benchmark MCP server
+2. Deploy the agent
+3. Run the evaluation
+
+**Options:**
+```bash
+# Basic usage with defaults
+./deploy-and-evaluate.sh --benchmark tau2 --agent tool_calling
+
+# With custom model
+./deploy-and-evaluate.sh --benchmark tau2 --agent tool_calling --model Azure/gpt-4o-mini
+
+# With custom Keycloak credentials
+./deploy-and-evaluate.sh --benchmark tau2 --agent tool_calling --model Azure/gpt-4o-mini --keycloak-user admin --keycloak-pass admin
+
+# Show help
+./deploy-and-evaluate.sh --help
+```
+
 ### Running Benchmarks
 
-The `evaluate_benchmark.sh` script automatically:
+The `evaluate-benchmark.sh` script automatically:
 - Sets up port forwarding (MCP server on localhost:7770, A2A agent on localhost:7701)
 - Waits for pods to be ready
 - Tests connectivity to both services
@@ -197,7 +225,7 @@ The `evaluate_benchmark.sh` script automatically:
 - Cleans up port forwards on exit
 
 ```bash
-./evaluate_benchmark.sh tau2 tool_calling
+./evaluate-benchmark.sh --benchmark tau2 --agent tool_calling
 ```
 
 

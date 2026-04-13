@@ -1,9 +1,9 @@
 #!/bin/bash
 # Deploy and Configure Exgentic benchmark to Kagenti cluster
-# Usage: ./deploy-benchmark.sh <benchmark-name> [--model MODEL] [--keycloak-user USER] [--keycloak-pass PASS]
-# Example: ./deploy-benchmark.sh gsm8k
-# Example: ./deploy-benchmark.sh tau2 --model Azure/gpt-4o-mini
-# Example: ./deploy-benchmark.sh tau2 --model Azure/gpt-4o-mini --keycloak-user admin --keycloak-pass admin
+# Usage: ./deploy-benchmark.sh --benchmark <name> [OPTIONS]
+# Example: ./deploy-benchmark.sh --benchmark gsm8k
+# Example: ./deploy-benchmark.sh --benchmark tau2 --model Azure/gpt-4o-mini
+# Example: ./deploy-benchmark.sh --benchmark tau2 --model Azure/gpt-4o-mini --keycloak-user admin --keycloak-pass admin
 
 set -e
 
@@ -16,6 +16,10 @@ BENCHMARK_NAME=""
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --benchmark)
+            BENCHMARK_NAME="$2"
+            shift 2
+            ;;
         --model)
             MODEL_NAME="$2"
             shift 2
@@ -29,21 +33,21 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         -h|--help)
-            echo "Usage: $0 <benchmark-name> [OPTIONS]"
+            echo "Usage: $0 --benchmark <name> [OPTIONS]"
             echo ""
-            echo "Arguments:"
-            echo "  <benchmark-name>           Benchmark name (required, e.g., gsm8k, tau2)"
+            echo "Required Arguments:"
+            echo "  --benchmark NAME           Benchmark name (e.g., gsm8k, tau2)"
             echo ""
-            echo "Options:"
-            echo "  --model MODEL              Model name (default: Azure/gpt-4o)"
+            echo "Optional Arguments:"
+            echo "  --model MODEL              Model name (default: Azure/gpt-4.1)"
             echo "  --keycloak-user USER       Keycloak username (default: admin)"
             echo "  --keycloak-pass PASS       Keycloak password (default: admin)"
             echo "  -h, --help                 Show this help message"
             echo ""
             echo "Examples:"
-            echo "  $0 gsm8k"
-            echo "  $0 tau2 --model Azure/gpt-4o-mini"
-            echo "  $0 tau2 --model Azure/gpt-4o-mini --keycloak-user admin --keycloak-pass admin"
+            echo "  $0 --benchmark gsm8k"
+            echo "  $0 --benchmark tau2 --model Azure/gpt-4o-mini"
+            echo "  $0 --benchmark tau2 --model Azure/gpt-4o-mini --keycloak-user admin --keycloak-pass admin"
             exit 0
             ;;
         -*)
@@ -52,21 +56,16 @@ while [[ $# -gt 0 ]]; do
             exit 1
             ;;
         *)
-            if [ -z "$BENCHMARK_NAME" ]; then
-                BENCHMARK_NAME="$1"
-            else
-                echo "Error: Unexpected argument: $1"
-                echo "Use --help for usage information"
-                exit 1
-            fi
-            shift
+            echo "Error: Unexpected argument: $1"
+            echo "Use --help for usage information"
+            exit 1
             ;;
     esac
 done
 
 if [ -z "$BENCHMARK_NAME" ]; then
-    echo "Error: Benchmark name is required"
-    echo "Usage: $0 <benchmark-name> [OPTIONS]"
+    echo "Error: --benchmark is required"
+    echo "Usage: $0 --benchmark <name> [OPTIONS]"
     echo "Use --help for more information"
     exit 1
 fi

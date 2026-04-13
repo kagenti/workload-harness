@@ -1,17 +1,56 @@
 #!/bin/bash
 # Evaluate a specific Exgentic benchmark
-# Usage: ./evaluate_benchmark.sh <benchmark-name> <agent-name>
-# Example: ./evaluate_benchmark.sh tau2 tool_calling
+# Usage: ./evaluate_benchmark.sh --benchmark <name> --agent <name>
+# Example: ./evaluate_benchmark.sh --benchmark tau2 --agent tool_calling
 
 set -e
 
-BENCHMARK_NAME="$1"
-AGENT_NAME_INPUT="$2"
+BENCHMARK_NAME=""
+AGENT_NAME_INPUT=""
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --benchmark)
+            BENCHMARK_NAME="$2"
+            shift 2
+            ;;
+        --agent)
+            AGENT_NAME_INPUT="$2"
+            shift 2
+            ;;
+        -h|--help)
+            echo "Usage: $0 --benchmark <name> --agent <name>"
+            echo ""
+            echo "Required Arguments:"
+            echo "  --benchmark NAME           Benchmark name (e.g., gsm8k, tau2)"
+            echo "  --agent NAME               Agent name (e.g., tool_calling, generic_agent)"
+            echo ""
+            echo "Options:"
+            echo "  -h, --help                 Show this help message"
+            echo ""
+            echo "Examples:"
+            echo "  $0 --benchmark tau2 --agent tool_calling"
+            echo "  $0 --benchmark gsm8k --agent generic_agent"
+            exit 0
+            ;;
+        -*)
+            echo "Error: Unknown option: $1"
+            echo "Use --help for usage information"
+            exit 1
+            ;;
+        *)
+            echo "Error: Unexpected argument: $1"
+            echo "Use --help for usage information"
+            exit 1
+            ;;
+    esac
+done
 
 if [ -z "$BENCHMARK_NAME" ] || [ -z "$AGENT_NAME_INPUT" ]; then
-    echo "Error: Benchmark name and agent name are required"
-    echo "Usage: $0 <benchmark-name> <agent-name>"
-    echo "Example: $0 tau2 tool_calling"
+    echo "Error: Both --benchmark and --agent are required"
+    echo "Usage: $0 --benchmark <name> --agent <name>"
+    echo "Use --help for more information"
     exit 1
 fi
 

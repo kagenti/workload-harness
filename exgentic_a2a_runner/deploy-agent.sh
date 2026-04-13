@@ -1,8 +1,8 @@
 #!/bin/bash
 # Deploy and Configure agent to Kagenti cluster via API
-# Usage: ./deploy-agent.sh <benchmark-name> <agent-name> [OPTIONS]
-# Example: ./deploy-agent.sh gsm8k generic_agent
-# Example: ./deploy-agent.sh tau2 tool_calling --model Azure/gpt-4o-mini
+# Usage: ./deploy-agent.sh --benchmark <name> --agent <name> [OPTIONS]
+# Example: ./deploy-agent.sh --benchmark gsm8k --agent generic_agent
+# Example: ./deploy-agent.sh --benchmark tau2 --agent tool_calling --model Azure/gpt-4o-mini
 
 set -e
 
@@ -14,9 +14,16 @@ BENCHMARK_NAME=""
 AGENT_NAME_INPUT=""
 
 # Parse arguments
-POSITIONAL_ARGS=()
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --benchmark)
+            BENCHMARK_NAME="$2"
+            shift 2
+            ;;
+        --agent)
+            AGENT_NAME_INPUT="$2"
+            shift 2
+            ;;
         --model)
             MODEL_NAME="$2"
             shift 2
@@ -30,22 +37,22 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         -h|--help)
-            echo "Usage: $0 <benchmark-name> <agent-name> [OPTIONS]"
+            echo "Usage: $0 --benchmark <name> --agent <name> [OPTIONS]"
             echo ""
-            echo "Arguments:"
-            echo "  <benchmark-name>           Benchmark name (required, e.g., gsm8k, tau2)"
-            echo "  <agent-name>               Agent name (required, e.g., tool_calling, generic_agent)"
+            echo "Required Arguments:"
+            echo "  --benchmark NAME           Benchmark name (e.g., gsm8k, tau2)"
+            echo "  --agent NAME               Agent name (e.g., tool_calling, generic_agent)"
             echo ""
-            echo "Options:"
-            echo "  --model MODEL              Model name (default: Azure/gpt-4o)"
+            echo "Optional Arguments:"
+            echo "  --model MODEL              Model name (default: Azure/gpt-4.1)"
             echo "  --keycloak-user USER       Keycloak username (default: admin)"
             echo "  --keycloak-pass PASS       Keycloak password (default: admin)"
             echo "  -h, --help                 Show this help message"
             echo ""
             echo "Examples:"
-            echo "  $0 gsm8k generic_agent"
-            echo "  $0 tau2 tool_calling --model Azure/gpt-4o-mini"
-            echo "  $0 tau2 tool_calling --model Azure/gpt-4o-mini --keycloak-user admin --keycloak-pass admin"
+            echo "  $0 --benchmark gsm8k --agent generic_agent"
+            echo "  $0 --benchmark tau2 --agent tool_calling --model Azure/gpt-4o-mini"
+            echo "  $0 --benchmark tau2 --agent tool_calling --model Azure/gpt-4o-mini --keycloak-user admin --keycloak-pass admin"
             exit 0
             ;;
         -*)
@@ -54,21 +61,16 @@ while [[ $# -gt 0 ]]; do
             exit 1
             ;;
         *)
-            POSITIONAL_ARGS+=("$1")
-            shift
+            echo "Error: Unexpected argument: $1"
+            echo "Use --help for usage information"
+            exit 1
             ;;
     esac
 done
 
-# Restore positional parameters
-set -- "${POSITIONAL_ARGS[@]}"
-
-BENCHMARK_NAME="$1"
-AGENT_NAME_INPUT="$2"
-
 if [ -z "$BENCHMARK_NAME" ] || [ -z "$AGENT_NAME_INPUT" ]; then
-    echo "Error: Benchmark name and agent name are required"
-    echo "Usage: $0 <benchmark-name> <agent-name> [OPTIONS]"
+    echo "Error: Both --benchmark and --agent are required"
+    echo "Usage: $0 --benchmark <name> --agent <name> [OPTIONS]"
     echo "Use --help for more information"
     exit 1
 fi
