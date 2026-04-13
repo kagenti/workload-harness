@@ -297,61 +297,45 @@ class Runner:
 
             max_workers = self.config.exgentic.max_parallel_sessions
             
-            if max_workers == 1:
-                # Sequential processing (original behavior)
-                logger.info("Processing sessions sequentially")
-                for session_data in self.exgentic.iterate_sessions(task_ids):
-                    # Record session creation time
-                    creation_time_seconds = time.time() - session_data.created_at
-                    logger.debug(f"Session creation took {creation_time_seconds:.2f}s")
-                    
-                    result = self.process_session(session_data)
-                    self.summary.add_result(result)
-
-                    # Check abort on failure
-                    if not result.success and self.config.exgentic.abort_on_failure:
-                        logger.error("Aborting due to session failure (ABORT_ON_FAILURE=true)")
-                        break
-            else:
-                # Parallel processing
-                logger.info(f"Processing sessions in parallel with {max_workers} workers")
+            # Always use ThreadPoolExecutor (works for both sequential and parallel)
+            logger.info(f"Processing sessions with {max_workers} worker(s)")
+            
+            # Collect all session data first
+            sessions = list(self.exgentic.iterate_sessions(task_ids))
+            
+            # Process sessions using ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # Submit all sessions
+                future_to_session = {
+                    executor.submit(self.process_session, session_data): session_data
+                    for session_data in sessions
+                }
                 
-                # Collect all session data first
-                sessions = list(self.exgentic.iterate_sessions(task_ids))
-                
-                # Process sessions in parallel
-                with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                    # Submit all sessions
-                    future_to_session = {
-                        executor.submit(self.process_session, session_data): session_data
-                        for session_data in sessions
-                    }
-                    
-                    # Process results as they complete
-                    for future in as_completed(future_to_session):
-                        session_data = future_to_session[future]
-                        try:
-                            result = future.result()
-                            self.summary.add_result(result)
-                            
-                            # Check abort on failure
-                            if not result.success and self.config.exgentic.abort_on_failure:
-                                logger.error("Aborting due to session failure (ABORT_ON_FAILURE=true)")
-                                # Cancel remaining futures
-                                for f in future_to_session:
-                                    f.cancel()
-                                break
-                        except Exception as e:
-                            logger.error(f"Session {session_data.session_id} raised exception: {e}")
-                            # Create a failure result
-                            result = SessionResult(
-                                session_id=session_data.session_id,
-                                success=False,
-                                latency_seconds=0,
-                                evaluation_result=False,
-                                error=str(e),
-                            )
-                            self.summary.add_result(result)
+                # Process results as they complete
+                for future in as_completed(future_to_session):
+                    session_data = future_to_session[future]
+                    try:
+                        result = future.result()
+                        self.summary.add_result(result)
+                        
+                        # Check abort on failure
+                        if not result.success and self.config.exgentic.abort_on_failure:
+                            logger.error("Aborting due to session failure (ABORT_ON_FAILURE=true)")
+                            # Cancel remaining futures
+                            for f in future_to_session:
+                                f.cancel()
+                            break
+                    except Exception as e:
+                        logger.error(f"Session {session_data.session_id} raised exception: {e}")
+                        # Create a failure result
+                        result = SessionResult(
+                            session_id=session_data.session_id,
+                            success=False,
+                            latency_seconds=0,
+                            evaluation_result=False,
+                            error=str(e),
+                        )
+                        self.summary.add_result(result)
 
             # Print summary
             self.summary.print_summary(max_parallel_sessions=self.max_parallel_sessions)
