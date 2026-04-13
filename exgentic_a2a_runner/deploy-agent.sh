@@ -575,42 +575,53 @@ else
     AGENT_PORT=8084
     
     # Check if port is already in use
-    if lsof -Pi :$AGENT_PORT -sTCP:LISTEN -t >/dev/null 2>&1; then
+    if nc -z localhost $AGENT_PORT 2>/dev/null; then
         echo "⚠ Port $AGENT_PORT already in use, skipping card test"
     else
-        kubectl port-forward -n $NAMESPACE svc/$AGENT_NAME $AGENT_PORT:8080 >/dev/null 2>&1 &
-        AGENT_PF_PID=$!
-        sleep 3
-        
-        # Check if port-forward is actually running
-        if ! kill -0 $AGENT_PF_PID 2>/dev/null; then
-            echo "⚠ Port-forward failed to start, skipping card test"
-        else
-            # Test agent card endpoint (trying common A2A methods)
-            CARD_RESPONSE=$(curl -s --max-time 5 -X POST http://localhost:$AGENT_PORT/ \
-              -H "Content-Type: application/json" \
-              -d '{"jsonrpc": "2.0", "method": "agent/card", "id": 1}' 2>/dev/null)
-            
+        # Retry until agent responds (up to 60s)
+        # After a rollout, the new pod's endpoint may not be registered yet,
+        # causing port-forward to exit immediately. Restart it on each attempt.
+        CARD_RESPONSE=""
+        AGENT_PF_PID=""
+        for i in $(seq 1 60); do
+            # (Re)start port-forward if it's not running
+            if [ -z "$AGENT_PF_PID" ] || ! kill -0 $AGENT_PF_PID 2>/dev/null; then
+                [ -n "$AGENT_PF_PID" ] && { kill $AGENT_PF_PID 2>/dev/null || true; wait $AGENT_PF_PID 2>/dev/null || true; }
+                kubectl port-forward -n $NAMESPACE svc/$AGENT_NAME $AGENT_PORT:8080 >/dev/null 2>&1 &
+                AGENT_PF_PID=$!
+                sleep 2
+            fi
+
+            CARD_RESPONSE=$(curl -s --max-time 3 http://localhost:$AGENT_PORT/.well-known/agent-card.json 2>/dev/null) || true
+            if [ -n "$CARD_RESPONSE" ]; then
+                break
+            fi
+            if [ $((i % 10)) -eq 0 ]; then
+                echo "  Waiting for agent to be ready... (${i}s)"
+            fi
+            sleep 1
+        done
+
+        # Always clean up port-forward
+        if [ -n "$AGENT_PF_PID" ]; then
+            kill $AGENT_PF_PID 2>/dev/null || true
+            wait $AGENT_PF_PID 2>/dev/null || true
+        fi
+
             if [ -z "$CARD_RESPONSE" ]; then
-                echo "⚠ No response from agent (this is normal for some agent types)"
-                echo "  Agent is deployed and running, but may not respond to agent/card method"
+                echo "⚠ No response from agent card endpoint after 60s"
+                echo "  Agent is deployed and running, but card endpoint did not respond"
             else
                 # Check if response contains error
                 if echo "$CARD_RESPONSE" | grep -q '"error"'; then
-                    echo "⚠ Agent responded with error (this is normal for some agent types):"
+                    echo "⚠ Agent responded with error:"
                     echo "$CARD_RESPONSE" | jq '.' 2>/dev/null || echo "$CARD_RESPONSE"
-                    echo ""
-                    echo "  Agent is deployed and running, but may use different A2A method names"
                 else
                     echo "✓ Agent card access successful:"
-                    echo "$CARD_RESPONSE" | jq '.' 2>/dev/null || echo "$CARD_RESPONSE"
+                    echo "$CARD_RESPONSE" | jq '.name, .description' 2>/dev/null || echo "$CARD_RESPONSE"
                 fi
             fi
-            
-            # Clean up port-forward
-            kill $AGENT_PF_PID 2>/dev/null
         fi
-    fi
 fi
 
 echo ""
