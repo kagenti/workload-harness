@@ -160,7 +160,7 @@ echo ""
 echo "Step 3: Setting up port-forward to Keycloak..."
 
 # Check if port-forward is already running
-if lsof -Pi :$KEYCLOAK_PORT -sTCP:LISTEN -t >/dev/null 2>&1; then
+if nc -z localhost $KEYCLOAK_PORT 2>/dev/null; then
     echo "✓ Port $KEYCLOAK_PORT is already in use (assuming Keycloak is accessible)"
 else
     echo "Starting port-forward to keycloak on port $KEYCLOAK_PORT..."
@@ -253,7 +253,7 @@ echo ""
 echo "Step 6: Setting up port-forward to Kagenti backend..."
 
 # Check if port-forward is already running
-if lsof -Pi :$KAGENTI_PORT -sTCP:LISTEN -t >/dev/null 2>&1; then
+if nc -z localhost $KAGENTI_PORT 2>/dev/null; then
     echo "✓ Port $KAGENTI_PORT is already in use (assuming Kagenti backend is accessible)"
 else
     echo "Starting port-forward to kagenti-backend on port $KAGENTI_PORT..."
@@ -499,74 +499,65 @@ echo ""
 
 MCP_HEALTH_PORT=8009
 MCP_API="http://localhost:$MCP_HEALTH_PORT"
+# Kagenti appends -mcp to the service name
+MCP_SVC_NAME="${TOOL_NAME}-mcp"
 
-# Check if port is already in use
-if lsof -Pi :$MCP_HEALTH_PORT -sTCP:LISTEN -t >/dev/null 2>&1; then
-    echo "Error: Port $MCP_HEALTH_PORT is already in use"
-    echo "Please free up the port and try again"
-    exit 1
-fi
-
-echo "Starting port-forward to MCP server on port $MCP_HEALTH_PORT..."
-kubectl port-forward -n $NAMESPACE svc/$TOOL_NAME $MCP_HEALTH_PORT:8000 >/dev/null 2>&1 &
-MCP_PF_PID=$!
-
-# Wait for port-forward to be ready
-echo "Waiting for MCP server port-forward to be ready..."
-HEALTH_CHECK_READY=false
-for i in {1..20}; do
-    # Try both /health and root endpoint
-    if curl -s -f "$MCP_API/health" >/dev/null 2>&1 || curl -s -f "$MCP_API/" >/dev/null 2>&1; then
-        echo "✓ MCP server port-forward is ready"
-        HEALTH_CHECK_READY=true
-        break
-    fi
-    sleep 1
-done
-
-if [ "$HEALTH_CHECK_READY" = false ]; then
-    echo "Error: MCP server port-forward did not become ready after 20 seconds"
-    echo "The server may not be running or may have failed to start"
-    kill $MCP_PF_PID 2>/dev/null || true
-    exit 1
-fi
-
-# Try /health endpoint first
-echo "Calling MCP server /health endpoint..."
-HEALTH_RESPONSE=$(curl -s -w "\n%{http_code}" "$MCP_API/health" 2>/dev/null || echo -e "\nERROR")
-
-HTTP_CODE=$(echo "$HEALTH_RESPONSE" | tail -n 1)
-HEALTH_BODY=$(echo "$HEALTH_RESPONSE" | sed '$d')
-
-if [ "$HTTP_CODE" = "200" ]; then
-    echo "✓ MCP server health check passed (HTTP 200)"
-    if [ -n "$HEALTH_BODY" ]; then
-        echo "Response: $HEALTH_BODY"
-    fi
-elif [ "$HTTP_CODE" = "404" ]; then
-    # /health endpoint not found, try root endpoint
-    echo "/health endpoint not found (404), trying root endpoint..."
-    ROOT_RESPONSE=$(curl -s -w "\n%{http_code}" "$MCP_API/" 2>/dev/null || echo -e "\nERROR")
-    ROOT_CODE=$(echo "$ROOT_RESPONSE" | tail -n 1)
-    
-    if [ "$ROOT_CODE" = "200" ]; then
-        echo "✓ MCP server is responding (HTTP 200 on root endpoint)"
-    else
-        echo "⚠ Warning: MCP server returned HTTP $ROOT_CODE on root endpoint"
-    fi
-elif [ "$HTTP_CODE" = "ERROR" ]; then
-    echo "⚠ Warning: Could not connect to MCP server"
-else
-    echo "⚠ Warning: MCP server health check returned HTTP $HTTP_CODE"
-    if [ -n "$HEALTH_BODY" ]; then
-        echo "Response: $HEALTH_BODY"
+# Verify the service exists
+if ! kubectl get svc "$MCP_SVC_NAME" -n "$NAMESPACE" >/dev/null 2>&1; then
+    echo "⚠ Service $MCP_SVC_NAME not found, trying $TOOL_NAME..."
+    MCP_SVC_NAME="$TOOL_NAME"
+    if ! kubectl get svc "$MCP_SVC_NAME" -n "$NAMESPACE" >/dev/null 2>&1; then
+        echo "⚠ Service $MCP_SVC_NAME not found either, skipping health check"
+        MCP_SVC_NAME=""
     fi
 fi
 
-# Clean up port-forward
-echo "Cleaning up MCP server port-forward..."
-kill $MCP_PF_PID 2>/dev/null || true
-sleep 1
+if [ -n "$MCP_SVC_NAME" ]; then
+    # Retry with port-forward restart (up to 60s)
+    # After a rollout the port-forward may die if the pod endpoint isn't registered yet
+    echo "Starting port-forward to $MCP_SVC_NAME on port $MCP_HEALTH_PORT..."
+    MCP_PF_PID=""
+    HEALTH_CHECK_PASSED=false
+    for i in $(seq 1 60); do
+        # (Re)start port-forward if not running
+        if [ -z "$MCP_PF_PID" ] || ! kill -0 $MCP_PF_PID 2>/dev/null; then
+            [ -n "$MCP_PF_PID" ] && { kill $MCP_PF_PID 2>/dev/null || true; wait $MCP_PF_PID 2>/dev/null || true; }
+            kubectl port-forward -n "$NAMESPACE" svc/"$MCP_SVC_NAME" $MCP_HEALTH_PORT:8000 >/dev/null 2>&1 &
+            MCP_PF_PID=$!
+            sleep 2
+        fi
+
+        # Health check: POST an MCP initialize request to /mcp
+        MCP_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 \
+            -X POST "$MCP_API/mcp" \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json, text/event-stream" \
+            -d '{"jsonrpc":"2.0","method":"initialize","id":1,"params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"healthcheck","version":"1.0"}}}' \
+            2>/dev/null) || true
+
+        if [ "$MCP_HTTP_CODE" = "200" ]; then
+            echo "✓ MCP server health check passed (HTTP 200 on /mcp)"
+            HEALTH_CHECK_PASSED=true
+            break
+        fi
+
+        if [ $((i % 10)) -eq 0 ]; then
+            echo "  Waiting for MCP server to be ready... (${i}s)"
+        fi
+        sleep 1
+    done
+
+    # Clean up port-forward
+    if [ -n "$MCP_PF_PID" ]; then
+        kill $MCP_PF_PID 2>/dev/null || true
+        wait $MCP_PF_PID 2>/dev/null || true
+    fi
+
+    if [ "$HEALTH_CHECK_PASSED" = false ]; then
+        echo "⚠ MCP server did not respond to health check after 60s"
+        echo "  The server may still be starting up"
+    fi
+fi
 
 echo ""
 echo "=========================================="
