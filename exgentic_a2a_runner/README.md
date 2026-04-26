@@ -201,6 +201,7 @@ The `deploy-and-evaluate.sh` script provides a convenient way to deploy both the
 
 ```bash
 ./deploy-and-evaluate.sh --benchmark tau2 --agent tool_calling
+./deploy-and-evaluate.sh --benchmark gsm8k --agent tool_calling --phoenix-otel
 ```
 
 This script will:
@@ -208,10 +209,15 @@ This script will:
 2. Deploy the agent
 3. Run the evaluation
 
+When [`--phoenix-otel`](exgentic_a2a_runner/deploy-and-evaluate.sh) is supplied, it is passed through to [`evaluate-benchmark.sh`](exgentic_a2a_runner/evaluate-benchmark.sh) for Phoenix OTLP port-forwarding during the evaluation step.
+
 **Options:**
 ```bash
 # Basic usage with defaults
 ./deploy-and-evaluate.sh --benchmark tau2 --agent tool_calling
+
+# With Phoenix OTEL forwarding during evaluation
+./deploy-and-evaluate.sh --benchmark gsm8k --agent tool_calling --phoenix-otel
 
 # With custom model
 ./deploy-and-evaluate.sh --benchmark tau2 --agent tool_calling --model Azure/gpt-4o-mini

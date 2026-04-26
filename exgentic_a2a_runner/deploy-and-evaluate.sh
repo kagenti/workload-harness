@@ -1,8 +1,8 @@
 #!/bin/bash
 # Deploy benchmark, agent, and run evaluation in one command
-# Usage: ./deploy_and_evaluate.sh --benchmark <name> --agent <name> [OPTIONS]
-# Example: ./deploy_and_evaluate.sh --benchmark tau2 --agent tool_calling
-# Example: ./deploy_and_evaluate.sh --benchmark tau2 --agent tool_calling --model Azure/gpt-4o-mini
+# Usage: ./deploy-and-evaluate.sh --benchmark <name> --agent <name> [OPTIONS]
+# Example: ./deploy-and-evaluate.sh --benchmark tau2 --agent tool_calling
+# Example: ./deploy-and-evaluate.sh --benchmark tau2 --agent tool_calling --model Azure/gpt-4o-mini
 
 set -e
 
@@ -15,6 +15,7 @@ AGENT_NAME=""
 MODEL_NAME="Azure/gpt-4.1"
 KEYCLOAK_USERNAME="admin"
 KEYCLOAK_PASSWORD="admin"
+PHOENIX_OTEL_ENABLED="false"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -39,6 +40,10 @@ while [[ $# -gt 0 ]]; do
             KEYCLOAK_PASSWORD="$2"
             shift 2
             ;;
+        --phoenix-otel)
+            PHOENIX_OTEL_ENABLED="true"
+            shift
+            ;;
         -h|--help)
             echo "Usage: $0 --benchmark <name> --agent <name> [OPTIONS]"
             echo ""
@@ -50,12 +55,14 @@ while [[ $# -gt 0 ]]; do
             echo "  --model MODEL              Model name (default: Azure/gpt-4.1)"
             echo "  --keycloak-user USER       Keycloak username (default: admin)"
             echo "  --keycloak-pass PASS       Keycloak password (default: admin)"
+            echo "  --phoenix-otel             Port-forward Phoenix OTLP during evaluation"
             echo "  -h, --help                 Show this help message"
             echo ""
             echo "Examples:"
             echo "  $0 --benchmark tau2 --agent tool_calling"
             echo "  $0 --benchmark tau2 --agent tool_calling --model Azure/gpt-4o-mini"
             echo "  $0 --benchmark gsm8k --agent generic_agent --model Azure/gpt-4o"
+            echo "  $0 --benchmark gsm8k --agent tool_calling --phoenix-otel"
             echo ""
             echo "This script will:"
             echo "  1. Deploy the benchmark using deploy-benchmark.sh"
@@ -96,6 +103,7 @@ echo "Benchmark: $BENCHMARK_NAME"
 echo "Agent: $AGENT_NAME"
 echo "Model: $MODEL_NAME"
 echo "Keycloak User: $KEYCLOAK_USERNAME"
+echo "Phoenix OTEL: $PHOENIX_OTEL_ENABLED"
 echo ""
 
 # Step 1: Deploy benchmark
@@ -138,7 +146,12 @@ echo ""
 echo "=========================================="
 echo "Step 3/3: Running Evaluation"
 echo "=========================================="
-"$SCRIPT_DIR/evaluate-benchmark.sh" --benchmark "$BENCHMARK_NAME" --agent "$AGENT_NAME"
+EVALUATE_ARGS=(--benchmark "$BENCHMARK_NAME" --agent "$AGENT_NAME")
+if [ "$PHOENIX_OTEL_ENABLED" = "true" ]; then
+    EVALUATE_ARGS+=(--phoenix-otel)
+fi
+
+"$SCRIPT_DIR/evaluate-benchmark.sh" "${EVALUATE_ARGS[@]}"
 
 if [ $? -ne 0 ]; then
     echo "Error: Evaluation failed"
