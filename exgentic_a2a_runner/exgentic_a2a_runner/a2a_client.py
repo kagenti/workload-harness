@@ -20,13 +20,15 @@ logger = logging.getLogger(__name__)
 class A2AProxyClient:
     """Client for A2A protocol communication using JSON-RPC."""
 
-    def __init__(self, config: A2AConfig):
+    def __init__(self, config: A2AConfig, otel_enabled: bool = False):
         """Initialize A2A client.
 
         Args:
             config: A2A configuration
+            otel_enabled: Whether OpenTelemetry propagation is required
         """
         self.config = config
+        self.otel_enabled = otel_enabled
         self._local = threading.local()
         
         # Fetch agent card and determine RPC URL (using temporary session)
@@ -40,7 +42,7 @@ class A2AProxyClient:
     def _create_session(self) -> requests.Session:
         """Create a new requests session with proper configuration."""
         session = requests.Session()
-        
+
         # Set default headers
         session.headers.update(
             {
@@ -48,7 +50,7 @@ class A2AProxyClient:
                 "Accept": "application/json",
             }
         )
-        
+
         # Set auth token if provided
         if self.config.auth_token:
             session.headers["Authorization"] = f"Bearer {self.config.auth_token}"
@@ -134,6 +136,22 @@ class A2AProxyClient:
             logger.warning(f"Could not fetch agent card, using configured endpoint: {e}")
             return self._build_rpc_url(self.config.base_url)
 
+    def _inject_trace_context_headers(self) -> Dict[str, str]:
+        """Inject current OpenTelemetry context into outbound HTTP headers."""
+        if not self.otel_enabled:
+            return {}
+
+        try:
+            from opentelemetry import propagate  # pyright: ignore[reportMissingImports]
+        except ImportError as exc:
+            raise RuntimeError(
+                "OpenTelemetry is enabled, but trace context propagation support is unavailable"
+            ) from exc
+
+        carrier: Dict[str, str] = {}
+        propagate.inject(carrier)
+        return carrier
+
     def _jsonrpc_call(
         self,
         method: str,
@@ -163,9 +181,11 @@ class A2AProxyClient:
 
         logger.debug(f"JSON-RPC call: {method} with request_id={request_id}")
 
+        headers = self._inject_trace_context_headers()
         response = self.session.post(
             self.rpc_url,
             json=payload,
+            headers=headers,
             timeout=self.config.timeout_seconds,
             verify=self.config.verify_tls,
         )

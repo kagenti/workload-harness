@@ -237,6 +237,7 @@ The `evaluate-benchmark.sh` script automatically:
 - Waits for pods to be ready
 - Tests connectivity to the forwarded services
 - Runs the benchmark evaluation
+- Propagates the current OpenTelemetry trace context into outbound A2A HTTP requests so the agent can continue the same distributed trace when it supports W3C trace headers
 - Cleans up port forwards on exit
 
 ```bash

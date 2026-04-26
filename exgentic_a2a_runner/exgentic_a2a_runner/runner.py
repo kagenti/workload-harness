@@ -172,7 +172,10 @@ class Runner:
         """
         self.config = config
         self.exgentic = ExgenticAdapter(config.exgentic)
-        self.a2a_client = A2AProxyClient(config.a2a)
+        self.a2a_client = A2AProxyClient(
+            config.a2a,
+            otel_enabled=bool(config.otel.exporter_endpoint),
+        )
         self.otel = OTELInstrumentation(config.otel)
         self.summary = RunSummary()
         self.max_parallel_sessions = config.exgentic.max_parallel_sessions
