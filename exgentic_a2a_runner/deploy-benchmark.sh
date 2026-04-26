@@ -41,7 +41,7 @@ while [[ $# -gt 0 ]]; do
             echo "Optional Arguments:"
             echo "  --model MODEL              Model name (default: Azure/gpt-4.1)"
             echo "  --keycloak-user USER       Keycloak username (default: admin)"
-            echo "  --keycloak-pass PASS       Keycloak password (auto-detected from cluster if not provided)"
+            echo "  --keycloak-pass PASS       Keycloak password (default: admin)"
             echo "  -h, --help                 Show this help message"
             echo ""
             echo "Examples:"
@@ -68,49 +68,6 @@ if [ -z "$BENCHMARK_NAME" ]; then
     echo "Usage: $0 --benchmark <name> [OPTIONS]"
     echo "Use --help for more information"
     exit 1
-fi
-
-# Auto-fetch Keycloak password from cluster if using default
-if [ "$KEYCLOAK_PASSWORD" = "admin" ]; then
-    echo "Attempting to fetch Keycloak password from cluster..."
-    
-    # Try to get kagenti realm admin credentials from kagenti-test-user secret
-    KAGENTI_PASSWORD=$(kubectl get secret kagenti-test-user -n keycloak -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
-    
-    if [ -n "$KAGENTI_PASSWORD" ]; then
-        # Test if the fetched password works
-        TEST_AUTH=$(curl -s -X POST "http://localhost:8002/realms/kagenti/protocol/openid-connect/token" \
-            -H "Content-Type: application/x-www-form-urlencoded" \
-            -d "username=admin" \
-            -d "password=$KAGENTI_PASSWORD" \
-            -d "grant_type=password" \
-            -d "client_id=kagenti" 2>/dev/null || echo "")
-        
-        if echo "$TEST_AUTH" | grep -q "access_token"; then
-            KEYCLOAK_PASSWORD="$KAGENTI_PASSWORD"
-            echo "✓ Successfully fetched Keycloak password from cluster"
-        else
-            echo "⚠ Warning: Fetched password from cluster but authentication failed"
-            echo "Please provide the correct password using --keycloak-pass option"
-            exit 1
-        fi
-    else
-        # Fallback: test if default password works
-        TEST_AUTH=$(curl -s -X POST "http://localhost:8002/realms/kagenti/protocol/openid-connect/token" \
-            -H "Content-Type: application/x-www-form-urlencoded" \
-            -d "username=admin" \
-            -d "password=admin" \
-            -d "grant_type=password" \
-            -d "client_id=kagenti" 2>/dev/null || echo "")
-        
-        if echo "$TEST_AUTH" | grep -q "access_token"; then
-            echo "✓ Using default Keycloak password"
-        else
-            echo "⚠ Warning: Could not fetch password from cluster and default password doesn't work"
-            echo "Please provide the correct password using --keycloak-pass option"
-            exit 1
-        fi
-    fi
 fi
 
 IMAGE_NAME="localhost/exgentic-mcp-${BENCHMARK_NAME}:latest"
