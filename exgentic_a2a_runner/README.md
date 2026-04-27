@@ -425,6 +425,140 @@ kubectl cluster-info
 In the observed failure, the control-plane container had exited and starting [`kagenti-control-plane`](exgentic_a2a_runner/evaluate-benchmark.sh) restored access immediately.
 ```
 
+### Analyzing Traces with analyze-run.sh
+
+The [`analyze-run.sh`](exgentic_a2a_runner/analyze-run.sh) script provides comprehensive trace analysis by downloading Agent.Session traces from Phoenix and generating detailed performance reports.
+
+#### Features
+
+- **Automatic Phoenix connectivity**: Connects to Phoenix GraphQL API with optional auto port-forwarding
+- **Trace filtering**: Downloads Agent.Session root spans and all child spans
+- **Performance metrics**: Calculates timing statistics (avg, p50, p95, min, max) for:
+  - Session creation time
+  - Agent call time (end-to-end agent execution)
+  - Evaluation time
+  - LLM call time and token usage
+  - Tool call time
+- **Grouping**: Groups traces by agent, benchmark, model, and parallel session count
+- **Detailed reports**: Generates both summary statistics and individual trace details
+
+#### Usage
+
+```bash
+# Basic usage (assumes Phoenix is accessible at localhost:6006)
+./analyze-run.sh
+
+# With custom Phoenix URL and limit
+./analyze-run.sh --url http://localhost:6006/graphql --limit 200
+
+# Auto port-forward from kind cluster if Phoenix is not accessible locally
+./analyze-run.sh --forward --limit 50
+
+# Specify a different Phoenix project
+./analyze-run.sh --project my-project --limit 100
+```
+
+#### Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `-u, --url URL` | Phoenix GraphQL endpoint URL | `http://localhost:6006/graphql` |
+| `-l, --limit NUM` | Maximum number of traces to download | `100` |
+| `-p, --project NAME` | Phoenix project name | `default` |
+| `-f, --forward` | Auto port-forward Phoenix from kind cluster if not accessible | `false` |
+| `-h, --help` | Show help message | - |
+
+#### How It Works
+
+1. **Connectivity Test**: Attempts to connect to Phoenix GraphQL API
+2. **Auto Port-Forward** (if `--forward` is used): Sets up port-forwarding from kind cluster if Phoenix is not accessible
+3. **Project Resolution**: Resolves the Phoenix project ID from the project name
+4. **Trace Discovery**: Queries for Agent.Session root spans, sorted by creation time (most recent first)
+5. **Full Trace Download**: For each trace ID, downloads all child spans (limited to 500 spans per trace)
+6. **Analysis**: Pipes trace data to [`analyze_traces.py`](exgentic_a2a_runner/analyze_traces.py) for detailed analysis
+
+#### Report Output
+
+The script generates two main sections:
+
+**1. Summary Statistics by Configuration**
+
+Groups traces by (agent, benchmark, model, parallel sessions) and shows:
+- Count of traces
+- Average, P50, P95, Min, Max for:
+  - Session creation time
+  - Agent call time
+  - Evaluation time
+  - LLM call time (with token counts)
+  - Tool call time
+- Time distribution percentages (LLM%, Tool%, Other%)
+
+**2. Individual Trace Details**
+
+Lists each trace with:
+- Trace ID
+- Agent, Benchmark, Model, Parallel sessions
+- Session creation time
+- Agent call time (with LLM% and Tool% breakdown)
+- Evaluation time
+- LLM tokens (input/output)
+- Tool call count and time
+
+#### Example Output
+
+```
+=== Phoenix Trace Analysis ===
+Phoenix URL: http://localhost:6006/graphql
+Project: default
+Limit: 100
+
+✓ Connected to Phoenix (project: default, id: UHJvamVjdDox)
+
+Found 45 Agent.Session traces
+Downloading full traces with child spans...
+Downloaded 45 traces
+
+=== Trace Analysis Report ===
+
+Summary Statistics by Configuration:
+┌─────────────┬───────────┬─────────┬──────────┬───────┬─────────────┬─────────────┬─────────────┬─────────────┬─────────────┐
+│ Agent       │ Benchmark │ Model   │ Parallel │ Count │ Avg Create  │ Avg Agent   │ Avg Eval    │ Avg LLM     │ Avg Tool    │
+│             │           │         │          │       │ (ms)        │ Call (ms)   │ (ms)        │ (ms)        │ (ms)        │
+├─────────────┼───────────┼─────────┼──────────┼───────┼─────────────┼─────────────┼─────────────┼─────────────┼─────────────┤
+│ tool-calling│ gsm8k     │ gpt-4o  │ 1        │ 45    │ 125.3       │ 8234.5      │ 45.2        │ 6543.2      │ 1234.5      │
+│             │           │         │          │       │             │             │             │ (79.5%)     │ (15.0%)     │
+└─────────────┴───────────┴─────────┴──────────┴───────┴─────────────┴─────────────┴─────────────┴─────────────┴─────────────┘
+```
+
+#### Prerequisites
+
+- **jq**: JSON processor for parsing GraphQL responses
+  ```bash
+  # macOS
+  brew install jq
+  
+  # Ubuntu/Debian
+  apt-get install jq
+  ```
+- **Python 3**: For running the analysis script
+- **Phoenix**: Running and accessible (either locally or in kind cluster)
+
+#### Troubleshooting
+
+**Connection refused:**
+- Ensure Phoenix is running: `kubectl get pods -n kagenti-system -l app=phoenix`
+- Use `--forward` flag to auto port-forward from kind cluster
+- Manually port-forward: `kubectl port-forward -n kagenti-system svc/phoenix 6006:6006`
+
+**No traces found:**
+- Verify traces exist in Phoenix UI: `http://localhost:6006`
+- Check that Agent.Session spans are being created by the runner
+- Ensure OTEL is enabled in the runner configuration
+
+**GraphQL errors:**
+- Check Phoenix version compatibility
+- Verify the project name exists: `./analyze-run.sh` will list available projects on error
+
 #### 4. View Traces in Jaeger UI
 
 1. Open http://localhost:16686 in your browser
