@@ -248,6 +248,15 @@ def print_report(records: list[TraceRecord]) -> None:
         print(f"  Avg Tool calls/session:    {avg(tool_counts):.1f}")
         if any(llm_times):
             print(f"  Avg LLM call latency:      {avg([t.llm_total_s / t.llm_count for t in traces if t.llm_count > 0]):.2f}s")
+        
+        # Calculate percentage of agent call time spent on LLM vs Tool
+        llm_pcts = [(t.llm_total_s / t.agent_call_s * 100) if t.agent_call_s > 0 else 0 for t in traces]
+        tool_pcts = [(t.tool_total_s / t.agent_call_s * 100) if t.agent_call_s > 0 else 0 for t in traces]
+        if any(llm_pcts):
+            print(f"  Avg % time on LLM calls:   {avg(llm_pcts):.1f}%")
+        if any(tool_pcts):
+            print(f"  Avg % time on Tool calls:  {avg(tool_pcts):.1f}%")
+        
         input_tokens = [t.llm_input_tokens for t in traces]
         output_tokens = [t.llm_output_tokens for t in traces]
         if any(input_tokens):
@@ -259,27 +268,32 @@ def print_report(records: list[TraceRecord]) -> None:
         print()
 
     # Individual traces
-    print("=" * 90)
+    print("=" * 140)
     print("Individual Traces")
-    print("=" * 90)
+    print("=" * 140)
     print()
     header = (
-        f"{'Session ID':<38s} {'Status':<7s} {'Eval':<6s} {'Total':>7s} "
-        f"{'Create':>7s} {'Agent':>7s} {'TTFO':>7s} {'LLM':>7s} {'Tool':>7s} {'Eval':>7s}"
+        f"{'Agent':<20s} {'Benchmark':<15s} {'Model':<30s} {'Par':>3s} "
+        f"{'Session ID':<38s} {'Stat':<5s} {'Eval':<4s} "
+        f"{'Total':>6s} {'Crt':>5s} {'Agt':>6s} {'TTFO':>5s} "
+        f"{'LLM':>6s} {'LLM%':>5s} {'Tool':>6s} {'Tool%':>5s} {'Eval':>5s}"
     )
     print(header)
     print("-" * len(header))
 
     for r in records:
         eval_str = "pass" if r.evaluation_result is True else "fail" if r.evaluation_result is False else "?"
+        llm_pct = (r.llm_total_s / r.agent_call_s * 100) if r.agent_call_s > 0 else 0
+        tool_pct = (r.tool_total_s / r.agent_call_s * 100) if r.agent_call_s > 0 else 0
         print(
-            f"{r.session_id:<38s} {r.status:<7s} {eval_str:<6s} {r.total_latency_s:>7.1f} "
-            f"{r.session_creation_s:>7.1f} {r.agent_call_s:>7.1f} {r.time_to_first_obs_s:>7.1f} "
-            f"{r.llm_total_s:>7.1f} {r.tool_total_s:>7.1f} {r.evaluation_s:>7.1f}"
+            f"{r.agent_name:<20s} {r.benchmark_name:<15s} {r.model:<30s} {r.num_parallel:>3d} "
+            f"{r.session_id:<38s} {r.status:<5s} {eval_str:<4s} "
+            f"{r.total_latency_s:>6.1f} {r.session_creation_s:>5.1f} {r.agent_call_s:>6.1f} {r.time_to_first_obs_s:>5.1f} "
+            f"{r.llm_total_s:>6.1f} {llm_pct:>5.1f} {r.tool_total_s:>6.1f} {tool_pct:>5.1f} {r.evaluation_s:>5.1f}"
         )
 
     print()
-    print("All times in seconds.")
+    print("All times in seconds. LLM% and Tool% show percentage of Agent call time.")
 
 
 def main() -> int:
