@@ -41,6 +41,8 @@ class TraceRecord:
     time_to_first_obs_s: float = 0.0
     llm_count: int = 0
     tool_count: int = 0
+    llm_input_tokens: int = 0
+    llm_output_tokens: int = 0
 
 
 def parse_attrs(node: dict) -> dict:
@@ -129,6 +131,10 @@ def parse_traces(data: dict) -> list[TraceRecord]:
             elif name.startswith("chat "):
                 record.llm_total_s += latency_s
                 record.llm_count += 1
+                child_attrs = parse_attrs(s)
+                token_count = child_attrs.get("llm", {}).get("token_count", {})
+                record.llm_input_tokens += int(token_count.get("prompt", 0) or 0)
+                record.llm_output_tokens += int(token_count.get("completion", 0) or 0)
             elif name == "execute_tool initial_observation":
                 initial_obs_start = s.get("startTime")
             elif name.startswith("execute_tool "):
@@ -238,10 +244,18 @@ def print_report(records: list[TraceRecord]) -> None:
         row("Evaluation (s)", eval_times)
 
         print()
-        print(f"  Avg LLM calls/session:   {avg(llm_counts):.1f}")
-        print(f"  Avg Tool calls/session:  {avg(tool_counts):.1f}")
+        print(f"  Avg LLM calls/session:     {avg(llm_counts):.1f}")
+        print(f"  Avg Tool calls/session:    {avg(tool_counts):.1f}")
         if any(llm_times):
-            print(f"  Avg LLM call latency:    {avg([t.llm_total_s / t.llm_count for t in traces if t.llm_count > 0]):.2f}s")
+            print(f"  Avg LLM call latency:      {avg([t.llm_total_s / t.llm_count for t in traces if t.llm_count > 0]):.2f}s")
+        input_tokens = [t.llm_input_tokens for t in traces]
+        output_tokens = [t.llm_output_tokens for t in traces]
+        if any(input_tokens):
+            print(f"  Avg LLM input tokens:      {avg(input_tokens):.0f}")
+        if any(output_tokens):
+            print(f"  Avg LLM output tokens:     {avg(output_tokens):.0f}")
+        if any(input_tokens) or any(output_tokens):
+            print(f"  Avg LLM total tokens:      {avg([i + o for i, o in zip(input_tokens, output_tokens)]):.0f}")
         print()
 
     # Individual traces
