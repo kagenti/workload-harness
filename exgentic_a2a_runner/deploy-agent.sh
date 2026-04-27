@@ -9,7 +9,7 @@ set -e
 # Default values
 MODEL_NAME="Azure/gpt-4.1"
 KEYCLOAK_USERNAME="admin"
-KEYCLOAK_PASSWORD="admin"
+KEYCLOAK_PASSWORD="unknown"
 BENCHMARK_NAME=""
 AGENT_NAME_INPUT=""
 
@@ -73,49 +73,6 @@ if [ -z "$BENCHMARK_NAME" ] || [ -z "$AGENT_NAME_INPUT" ]; then
     echo "Usage: $0 --benchmark <name> --agent <name> [OPTIONS]"
     echo "Use --help for more information"
     exit 1
-fi
-
-# Auto-fetch Keycloak password from cluster if using default
-if [ "$KEYCLOAK_PASSWORD" = "admin" ]; then
-    echo "Attempting to fetch Keycloak password from cluster..."
-    
-    # Try to get kagenti realm admin credentials from kagenti-test-user secret
-    KAGENTI_PASSWORD=$(kubectl get secret kagenti-test-user -n keycloak -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
-    
-    if [ -n "$KAGENTI_PASSWORD" ]; then
-        # Test if the fetched password works
-        TEST_AUTH=$(curl -s -X POST "http://localhost:8002/realms/kagenti/protocol/openid-connect/token" \
-            -H "Content-Type: application/x-www-form-urlencoded" \
-            -d "username=admin" \
-            -d "password=$KAGENTI_PASSWORD" \
-            -d "grant_type=password" \
-            -d "client_id=kagenti" 2>/dev/null || echo "")
-        
-        if echo "$TEST_AUTH" | grep -q "access_token"; then
-            KEYCLOAK_PASSWORD="$KAGENTI_PASSWORD"
-            echo "✓ Successfully fetched Keycloak password from cluster"
-        else
-            echo "⚠ Warning: Fetched password from cluster but authentication failed"
-            echo "Please provide the correct password using --keycloak-pass option"
-            exit 1
-        fi
-    else
-        # Fallback: test if default password works
-        TEST_AUTH=$(curl -s -X POST "http://localhost:8002/realms/kagenti/protocol/openid-connect/token" \
-            -H "Content-Type: application/x-www-form-urlencoded" \
-            -d "username=admin" \
-            -d "password=admin" \
-            -d "grant_type=password" \
-            -d "client_id=kagenti" 2>/dev/null || echo "")
-        
-        if echo "$TEST_AUTH" | grep -q "access_token"; then
-            echo "✓ Using default Keycloak password"
-        else
-            echo "⚠ Warning: Could not fetch password from cluster and default password doesn't work"
-            echo "Please provide the correct password using --keycloak-pass option"
-            exit 1
-        fi
-    fi
 fi
 
 # Determine deployment type based on agent name
@@ -245,14 +202,59 @@ fi
 
 echo ""
 
-# Step 2: Enable Direct Access Grants for kagenti client if needed
-echo "Step 2: Checking Keycloak client configuration..."
+# Step 1.5: Auto-fetch Keycloak password from cluster if using default
+if [ "$KEYCLOAK_PASSWORD" = "unknown" ]; then
+    echo "Step 1.5: Attempting to fetch Keycloak password from cluster..."
+    
+    # Try to get kagenti realm admin credentials from kagenti-test-user secret
+    KAGENTI_PASSWORD=$(kubectl get secret kagenti-test-user -n keycloak -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
+    
+    if [ -n "$KAGENTI_PASSWORD" ]; then
+        # Test if the fetched password works
+        TEST_AUTH=$(curl -s -X POST "http://localhost:$KEYCLOAK_PORT/realms/kagenti/protocol/openid-connect/token" \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            -d "username=admin" \
+            -d "password=$KAGENTI_PASSWORD" \
+            -d "grant_type=password" \
+            -d "client_id=kagenti" 2>/dev/null || echo "")
+        
+        if echo "$TEST_AUTH" | grep -q "access_token"; then
+            KEYCLOAK_PASSWORD="$KAGENTI_PASSWORD"
+            echo "✓ Successfully fetched and verified Keycloak password from cluster"
+        else
+            echo "⚠ Warning: Fetched password from cluster but authentication failed"
+            echo "Please provide the correct password using --keycloak-pass option"
+            exit 1
+        fi
+    else
+        # Fallback: test if default password works
+        TEST_AUTH=$(curl -s -X POST "http://localhost:$KEYCLOAK_PORT/realms/kagenti/protocol/openid-connect/token" \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            -d "username=admin" \
+            -d "password=admin" \
+            -d "grant_type=password" \
+            -d "client_id=kagenti" 2>/dev/null || echo "")
+        
+        if echo "$TEST_AUTH" | grep -q "access_token"; then
+            KEYCLOAK_PASSWORD="admin"
+            echo "✓ Using default Keycloak password"
+        else
+            echo "⚠ Warning: Could not fetch password from cluster and default password doesn't work"
+            echo "Please provide the correct password using --keycloak-pass option"
+            exit 1
+        fi
+    fi
+    echo ""
+fi
 
-# Get admin token first
+# Step 2: Enable Direct Access Grants for kagenti client if needed
+echo "Step 2: Enabling Direct Access Grants for kagenti client..."
+
+# Get admin token first (use "admin" password for master realm)
 ADMIN_TOKEN_RESPONSE=$(curl -s -X POST "$KEYCLOAK_API/realms/master/protocol/openid-connect/token" \
     -H "Content-Type: application/x-www-form-urlencoded" \
-    -d "username=$KEYCLOAK_USERNAME" \
-    -d "password=$KEYCLOAK_PASSWORD" \
+    -d "username=admin" \
+    -d "password=admin" \
     -d "grant_type=password" \
     -d "client_id=admin-cli" 2>/dev/null || echo "TOKEN_ERROR")
 
@@ -276,6 +278,25 @@ if [ "$ADMIN_TOKEN_RESPONSE" != "TOKEN_ERROR" ]; then
         fi
     fi
 fi
+
+echo ""
+
+# Step 2.5: Verify Keycloak password works now that Direct Access Grants is enabled
+echo "Step 2.5: Verifying Keycloak authentication..."
+TEST_AUTH=$(curl -s -X POST "http://localhost:$KEYCLOAK_PORT/realms/kagenti/protocol/openid-connect/token" \
+    -H "Content-Type: application/x-www-form-urlencoded" \
+    -d "username=$KEYCLOAK_USERNAME" \
+    -d "password=$KEYCLOAK_PASSWORD" \
+    -d "grant_type=password" \
+    -d "client_id=kagenti" 2>/dev/null || echo "")
+
+if ! echo "$TEST_AUTH" | grep -q "access_token"; then
+    echo "⚠ Warning: Authentication failed with current password"
+    echo "Response: $TEST_AUTH"
+    echo "Please provide the correct password using --keycloak-pass option"
+    exit 1
+fi
+echo "✓ Keycloak authentication verified"
 
 echo ""
 
@@ -603,7 +624,7 @@ echo "Step 11.2: Setting resource limits..."
 
 # Set CPU limit to 4 cores and memory limit to 3GB
 kubectl set resources deployment/$AGENT_NAME -n $NAMESPACE \
-    --limits=cpu=4,memory=3Gi \
+    --limits=cpu=4,memory=2Gi \
     --requests=cpu=500m,memory=512Mi 2>/dev/null && echo "✓ Agent resource limits set (CPU: 4 cores, Memory: 3Gi)" || echo "Warning: Could not set resource limits"
 
 echo ""
