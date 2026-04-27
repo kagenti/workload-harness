@@ -188,7 +188,7 @@ TRACES_JSON="["
 FIRST=true
 
 for TRACE_ID in $TRACE_IDS; do
-    TRACE_QUERY="{ node(id: \\\"$PROJECT_ID\\\") { ... on Project { trace(traceId: \\\"$TRACE_ID\\\") { traceId spans { edges { node { name spanKind statusCode statusMessage latencyMs startTime parentId context { traceId spanId } attributes } } } } } } }"
+    TRACE_QUERY="{ node(id: \\\"$PROJECT_ID\\\") { ... on Project { trace(traceId: \\\"$TRACE_ID\\\") { traceId spans(first: 500) { edges { node { name spanKind statusCode statusMessage latencyMs startTime parentId context { traceId spanId } attributes } } } } } } }"
 
     set +e
     TRACE_RESPONSE=$(run_graphql "$TRACE_QUERY")
