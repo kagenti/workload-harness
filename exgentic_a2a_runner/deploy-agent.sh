@@ -180,6 +180,30 @@ if [ -z "$BENCHMARK_NAME" ] || [ -z "$AGENT_NAME_INPUT" ]; then
     exit 1
 fi
 
+# Prerequisite check: AuthBridge plugin resolution (Step 8) and the skip_hosts
+# merge (Step 7.5) both shell out to `python3` with PyYAML. That happens deep
+# into the deploy after minutes of network work, so a missing venv/module fails
+# late (ModuleNotFoundError: No module named 'yaml'). Detect it here, up front,
+# and only when a plugin selector was actually supplied (the sole trigger for
+# those Python steps).
+if [ -n "$PIPELINE_PRESET" ] || [ ${#PIPELINE_SELECTORS[@]} -gt 0 ] || [ -n "$PIPELINE_OVERLAY_FILE" ]; then
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "Error: python3 is required for AuthBridge plugin resolution but was not found on PATH." >&2
+        echo "  You passed a plugin selector (--plugin/--no-plugin/--plugin-preset/--plugin-config-file)," >&2
+        echo "  which needs python3 + PyYAML. Install python3 and re-run." >&2
+        exit 1
+    fi
+    if ! python3 -c 'import yaml' 2>/dev/null; then
+        echo "Error: python3 is on PATH but the PyYAML module is missing." >&2
+        echo "  $(command -v python3) cannot 'import yaml'. This usually means the wrong" >&2
+        echo "  Python/venv is active. Activate the venv with PyYAML, or install it:" >&2
+        echo "    pip3 install --user pyyaml" >&2
+        echo "    brew install libyaml && pip3 install pyyaml      # macOS" >&2
+        echo "    sudo apt install python3-yaml                    # Debian/Ubuntu" >&2
+        exit 1
+    fi
+fi
+
 # Determine agent name and image
 # Automatically add exgentic-a2a- prefix if not already present
 if [[ "$AGENT_NAME_INPUT" == exgentic-a2a-* ]]; then

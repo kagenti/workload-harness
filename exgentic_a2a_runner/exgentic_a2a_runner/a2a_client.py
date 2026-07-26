@@ -96,9 +96,16 @@ class A2AProxyClient:
         # keys intent off authbridge's own session store (populated by a2a-parser),
         # not this header — but emitting it is harmless and useful for tracing.
         x_session_id = uuid.uuid4().hex
+        headers = {"x-session-id": x_session_id}
+        # Attach the Keycloak-issued bearer token so authbridge (the agent's
+        # sidecar) accepts the request; without it the endpoint returns 401.
+        # The same header is applied to the agent-card fetch and every
+        # send_message call because the client is reused for both.
+        if self.config.auth_token:
+            headers["Authorization"] = f"Bearer {self.config.auth_token}"
         httpx_client = httpx.AsyncClient(
             timeout=timeout_s,
-            headers={"x-session-id": x_session_id},
+            headers=headers,
         )
         if self.otel_enabled:
             try:

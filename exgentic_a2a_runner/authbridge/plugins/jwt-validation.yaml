@@ -1,8 +1,30 @@
 # jwt-validation plugin fragment.
 #
-# The operator base config supplies issuer/keycloak_url/keycloak_realm.
-# This fragment exists so the merge can keep the plugin in the resolved
-# selection (or flip its on_error policy) without re-rendering the
-# operator's heavy config block. Per-plugin overrides may be supplied
-# via --plugin-config-file (see AUTHBRIDGE_PIPELINE_SPEC.md §4.5).
+# Placeholders below are expanded by apply-pipeline.sh (envsubst) before
+# the merge runs. apply-pipeline.sh sources the issuer / keycloak values
+# from the operator's `authbridge-config` ConfigMap (flat keys ISSUER,
+# KEYCLOAK_URL, KEYCLOAK_REALM) and exports them as the JWT_VALIDATION_*
+# vars below; a JWT_VALIDATION_* override in the environment wins over the
+# operator value.
+#
+# Historically this fragment was config-less on the assumption that the
+# operator base config already carried a rendered jwt-validation config
+# block. It does not — the operator ships flat env keys in a separate
+# ConfigMap — so pipeline-merge.py (which replaces the inbound plugin
+# list wholesale) emitted a bare `name: jwt-validation`, and the sidecar
+# rejected the reload with "issuer is required". Rendering the config
+# here, like plugins/ibac.yaml, keeps the operator as the source of truth
+# while giving the plugin the config it needs.
+#
+# Schema matches the authbridge jwtValidationConfig struct
+# (authbridge/authlib/plugins/jwtvalidation/plugin.go @ v0.6.0-alpha.12):
+# issuer (required), keycloak_url + keycloak_realm (derive jwks_url).
+# Configure() calls DisallowUnknownFields(), so ONLY these keys are
+# accepted — note `provider`/`provider_url`/`provider_realm` belong to the
+# token-exchange plugin, NOT jwt-validation. Per-plugin overrides may still
+# be supplied via --plugin-config-file (see AUTHBRIDGE_PIPELINE_SPEC.md §4.5).
 name: jwt-validation
+config:
+  issuer: "${JWT_VALIDATION_ISSUER}"
+  keycloak_url: "${JWT_VALIDATION_KEYCLOAK_URL}"
+  keycloak_realm: "${JWT_VALIDATION_KEYCLOAK_REALM}"

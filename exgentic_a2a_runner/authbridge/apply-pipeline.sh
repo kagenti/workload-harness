@@ -60,6 +60,25 @@ TOKEN_BROKER_URL="${TOKEN_BROKER_URL:-}"
 TOKEN_BROKER_AUDIENCE="${TOKEN_BROKER_AUDIENCE:-}"
 export TOKEN_BROKER_URL TOKEN_BROKER_AUDIENCE
 
+# --- jwt-validation config (consumed only when jwt-validation is selected,
+# which every preset does). The plugin needs issuer + keycloak_url/realm that
+# the operator ships as flat keys in the generic `authbridge-config` ConfigMap —
+# NOT in the per-agent config.yaml the merge reads. Source them from there so
+# the operator stays the source of truth; an explicit JWT_VALIDATION_* env
+# override wins. Keys match authbridge's jwtValidationConfig struct
+# (issuer + keycloak_url + keycloak_realm); Configure() DisallowUnknownFields,
+# so do NOT introduce provider* keys here — those belong to token-exchange.
+AUTHBRIDGE_BASE_CM="${AUTHBRIDGE_BASE_CM:-authbridge-config}"
+_ab_base_key() {
+    # Echo a single flat key from the operator base ConfigMap, or empty.
+    kubectl -n "$NAMESPACE" get configmap "$AUTHBRIDGE_BASE_CM" \
+        -o jsonpath="{.data.$1}" 2>/dev/null || true
+}
+JWT_VALIDATION_ISSUER="${JWT_VALIDATION_ISSUER:-$(_ab_base_key ISSUER)}"
+JWT_VALIDATION_KEYCLOAK_URL="${JWT_VALIDATION_KEYCLOAK_URL:-$(_ab_base_key KEYCLOAK_URL)}"
+JWT_VALIDATION_KEYCLOAK_REALM="${JWT_VALIDATION_KEYCLOAK_REALM:-$(_ab_base_key KEYCLOAK_REALM)}"
+export JWT_VALIDATION_ISSUER JWT_VALIDATION_KEYCLOAK_URL JWT_VALIDATION_KEYCLOAK_REALM
+
 echo "Applying AuthBridge pipeline to $NAMESPACE/$AGENT_NAME"
 echo "  Plugins: $PIPELINE_PLUGINS"
 if [ -n "${PIPELINE_OVERLAY_FILE:-}" ]; then
@@ -126,6 +145,26 @@ done
 if $ibac_active && [ ! -s "$PROMPT_FILE" ]; then
     echo "ERROR: $PROMPT_FILE is missing or empty." >&2
     echo "       The IBAC judge's system prompt is shipped via this file." >&2
+    exit 1
+fi
+
+# --- Pre-flight: confirm the issuer is resolved when jwt-validation is
+# active. Without it the fragment renders an empty issuer and the sidecar
+# rejects the reload ("jwt-validation config: issuer is required"), leaving
+# the pod serving stale config — the exact failure this guard prevents.
+jwt_validation_active=false
+for tok in $PIPELINE_PLUGINS; do
+    name=${tok%%:*}
+    policy=${tok#*:}; [[ "$policy" == "$tok" ]] && policy=enforce
+    if [[ "$name" == "jwt-validation" && "$policy" != "off" ]]; then
+        jwt_validation_active=true
+        break
+    fi
+done
+if $jwt_validation_active && [ -z "${JWT_VALIDATION_ISSUER:-}" ]; then
+    echo "ERROR: jwt-validation is active but no issuer could be resolved." >&2
+    echo "       Expected key ISSUER in ConfigMap $NAMESPACE/$AUTHBRIDGE_BASE_CM," >&2
+    echo "       or set JWT_VALIDATION_ISSUER explicitly." >&2
     exit 1
 fi
 
