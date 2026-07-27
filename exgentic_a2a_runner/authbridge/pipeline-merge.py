@@ -29,6 +29,7 @@ kubectl apply and reload-wait).
 """
 
 import argparse
+import copy
 import sys
 from pathlib import Path
 from typing import Any
@@ -118,20 +119,61 @@ def build_entry(
     policy: str,
     fragment: dict[str, Any],
     overrides: dict[str, Any] | None,
+    operator_config: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    """Build the final plugin entry: fragment defaults + overrides + on_error."""
+    """Build the final plugin entry.
+
+    Config precedence (later wins on leaf conflicts):
+        operator base config  <  fragment defaults  <  --config-file overrides
+
+    The operator base is the config block the operator already rendered for
+    this plugin in the ConfigMap we read from stdin. Preserving it is the
+    whole point: several plugins (jwt-validation's issuer, token-exchange's
+    token_url/identity/routes) are configured ONLY by the operator, and a
+    prior version of this script replaced the plugin list wholesale — which
+    dropped that config and made the sidecar reject the reload
+    ("issuer is required", "token_url is required"). We now start from the
+    operator's block and layer our fragment + overrides on top, matching how
+    authbridge's own `abctl edit` splices rather than rebuilds.
+    """
     entry: dict[str, Any] = {"name": name}
-    cfg = fragment.get("config")
-    if isinstance(cfg, dict) and cfg:
-        entry["config"] = dict(cfg)
+    config: dict[str, Any] = {}
+    if isinstance(operator_config, dict) and operator_config:
+        config = copy.deepcopy(operator_config)
+    frag_cfg = fragment.get("config")
+    if isinstance(frag_cfg, dict) and frag_cfg:
+        deep_merge(config, copy.deepcopy(frag_cfg))
     if overrides:
-        entry.setdefault("config", {})
-        deep_merge(entry["config"], overrides)
+        deep_merge(config, overrides)
+    if config:
+        entry["config"] = config
     # `enforce` is the framework default — omit on_error to keep diffs
     # minimal. observe/off are explicit.
     if policy != "enforce":
         entry["on_error"] = policy
     return entry
+
+
+def index_operator_config(operator: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Map plugin name -> its `config` block as rendered by the operator in
+    the ConfigMap read from stdin. Scans both chains; missing/blank config
+    yields no entry."""
+    by_name: dict[str, dict[str, Any]] = {}
+    pipeline = operator.get("pipeline")
+    if not isinstance(pipeline, dict):
+        return by_name
+    for chain in ("inbound", "outbound"):
+        section = pipeline.get(chain)
+        if not isinstance(section, dict):
+            continue
+        for entry in section.get("plugins", []) or []:
+            if not isinstance(entry, dict):
+                continue
+            n = entry.get("name")
+            cfg = entry.get("config")
+            if isinstance(n, str) and isinstance(cfg, dict) and cfg:
+                by_name[n] = cfg
+    return by_name
 
 
 def validate_mutex(resolved: dict[str, str]) -> None:
@@ -207,31 +249,35 @@ def main() -> int:
         if text.strip():
             ibac_prompt = text
 
-    # Build inbound and outbound chains in canonical order.
+    # Index the config blocks the operator already rendered, so build_entry
+    # can preserve them (issuer, token_url/identity, …) instead of dropping
+    # them. Done before we overwrite the plugin lists below.
+    operator_config = index_operator_config(operator)
+
+    # Build inbound and outbound chains in canonical order. We're
+    # authoritative for the chain composition (which plugins, in what order,
+    # with what on_error) by design (see §4.3), but each plugin's config is
+    # seeded from the operator's rendered block so operator-supplied settings
+    # survive.
     inbound_entries: list[dict[str, Any]] = []
     for name in INBOUND_ORDER:
-        # Skip plugins not in the operator base when our policy is `off`
-        # — no need to emit a no-op entry for something that doesn't
-        # exist downstream. The operator base today enables every
-        # supported plugin, so this branch effectively never fires; it's
-        # here for the case where the operator drops one in the future.
-        # (Conservative behavior: always emit, since we don't read the
-        # operator base here. We *always* emit.)
         fragment = load_fragment(args.plugins_dir, name)
-        entry = build_entry(name, resolved[name], fragment, overrides.get(name))
+        entry = build_entry(name, resolved[name], fragment,
+                            overrides.get(name), operator_config.get(name))
         inbound_entries.append(entry)
 
     outbound_entries: list[dict[str, Any]] = []
     for name in OUTBOUND_ORDER:
         fragment = load_fragment(args.plugins_dir, name)
-        entry = build_entry(name, resolved[name], fragment, overrides.get(name))
+        entry = build_entry(name, resolved[name], fragment,
+                            overrides.get(name), operator_config.get(name))
         if name == "ibac" and ibac_prompt is not None and resolved[name] != "off":
             cfg = entry.setdefault("config", {})
             cfg["system_prompt"] = ibac_prompt
         outbound_entries.append(entry)
 
-    # Replace operator's plugin lists with our resolved ones. We're
-    # authoritative for the chain composition by design (see §4.3).
+    # Replace operator's plugin lists with our resolved ones (composition is
+    # ours; per-plugin config was preserved via operator_config above).
     pipeline = operator.setdefault("pipeline", {})
     pipeline.setdefault("inbound", {})["plugins"] = inbound_entries
     pipeline.setdefault("outbound", {})["plugins"] = outbound_entries

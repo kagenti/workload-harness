@@ -1071,6 +1071,64 @@ After all benchmarks finish, the script prints and writes `e2e-results.md`:
 - **Parallel jobs mode** (`--parallel-jobs`): all benchmarks run concurrently; each gets unique OTEL-collector and Prometheus ports so local port-forwards don't collide.
 - **In-cluster mode** (`--in-cluster`): one Kubernetes Job is created per benchmark from `k8s/job.yaml`; `e2e-test.sh` streams the logs and checks the job's success status.
 
+## IBAC Comparison Script
+
+`run-ibac-comparison.sh` runs the **same benchmark twice for an
+apples-to-apples comparison** — once with an AuthBridge plugin preset and
+once as a baseline with no plugins — then compares the two runs with
+[`analyze-run.sh --compare`](#analyzing-traces-with-analyze-runsh). Use it
+to measure the cost and effect of a plugin pipeline (e.g. IBAC) against an
+otherwise identical run.
+
+For each invocation it:
+
+1. Deletes existing deployments, then runs `deploy-and-evaluate.sh` with the
+   selected `--plugin-preset` (the *plugin* run).
+2. Deletes deployments again, then runs `deploy-and-evaluate.sh` with no
+   preset (the *baseline* run).
+3. Calls `analyze-run.sh --compare <plugin>,<baseline>` to report the delta.
+
+Both runs share a short random experiment id so their names are unique
+across repeated invocations yet paired to each other. Experiment names are
+derived from the parameters, e.g.
+`gsm8k-10-parallel-1-<id>-ibac` (plugin) and `gsm8k-10-parallel-1-<id>`
+(baseline).
+
+The judge is configured from `OPENAI_API_BASE` / `OPENAI_API_KEY` (both
+required); these are wired through to the runner and the analysis step.
+
+### Usage
+
+```bash
+# Defaults: gsm8k, tool_calling, 10 tasks, 1 session, ibac-only preset
+./run-ibac-comparison.sh
+
+# Compare the full pipeline (auth + parsers + IBAC) against baseline
+./run-ibac-comparison.sh --plugin-preset full
+
+# Larger run with explicit model and concurrency
+./run-ibac-comparison.sh --model gcp/gemini-3-flash-preview \
+    --benchmark gsm8k --max-tasks 50 --max-parallel-sessions 4
+
+# Show help
+./run-ibac-comparison.sh --help
+```
+
+### Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--model MODEL` | Model name | `gcp/gemini-3-flash-preview` |
+| `--benchmark NAME` | Benchmark name | `gsm8k` |
+| `--agent NAME` | Agent name | `tool_calling` |
+| `--max-tasks N` | Maximum number of tasks to evaluate | `10` |
+| `--max-parallel-sessions N` | Concurrent evaluation sessions | `1` |
+| `--plugin-preset PRESET` | Preset for the plugin run: `auth-only`, `ibac-only`, `full` | `ibac-only` |
+| `-h, --help` | Show help and exit | - |
+
+For preset contents and pipeline mechanics, see
+[AuthBridge Plugin Pipeline](#authbridge-plugin-pipeline).
+
 ## Current Limitations
 
 - No retry mechanism for failed operations

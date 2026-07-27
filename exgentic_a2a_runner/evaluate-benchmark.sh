@@ -378,6 +378,46 @@ source .venv/bin/activate
 export EXGENTIC_MCP_SERVER_URL="${MCP_BASE_URL}/mcp"
 export A2A_BASE_URL="$AGENT_BASE_URL"
 
+# Obtain a Keycloak bearer token for the A2A agent endpoint. The agent runs
+# behind an authbridge sidecar that validates a JWT from the "rossoctl" realm,
+# so unauthenticated requests get HTTP 401. This mirrors the direct-access-grant
+# flow used by deploy-benchmark.sh / deploy-agent.sh (client_id=rossoctl).
+# Skip if A2A_AUTH_TOKEN is already provided in the environment/.env.
+if [ -z "${A2A_AUTH_TOKEN:-}" ]; then
+    echo "Obtaining Keycloak token for A2A agent..."
+    KEYCLOAK_API="$(keycloak_api_url)"
+    KEYCLOAK_USERNAME="${KEYCLOAK_USERNAME:-admin}"
+
+    # Resolve the password the same way deploy-agent.sh does: prefer an explicit
+    # KEYCLOAK_PASSWORD, else the rossoctl-test-user cluster secret, else "admin".
+    if [ -z "${KEYCLOAK_PASSWORD:-}" ] || [ "${KEYCLOAK_PASSWORD}" = "unknown" ]; then
+        KC_SECRET_PASSWORD=$("$KUBECTL_BIN" get secret rossoctl-test-user -n keycloak \
+            -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
+        KEYCLOAK_PASSWORD="${KC_SECRET_PASSWORD:-admin}"
+    fi
+
+    A2A_TOKEN_RESPONSE=$(curl -s -X POST "$KEYCLOAK_API/realms/rossoctl/protocol/openid-connect/token" \
+        -H "Content-Type: application/x-www-form-urlencoded" \
+        -d "username=${KEYCLOAK_USERNAME}" \
+        -d "password=${KEYCLOAK_PASSWORD}" \
+        -d "grant_type=password" \
+        -d "client_id=rossoctl" 2>/dev/null || echo "")
+
+    A2A_AUTH_TOKEN=$(echo "$A2A_TOKEN_RESPONSE" | grep -o '"access_token":"[^"]*"' | sed 's/"access_token":"\([^"]*\)"/\1/')
+    if [ -z "$A2A_AUTH_TOKEN" ]; then
+        echo "Error: Could not obtain Keycloak token for the A2A agent."
+        echo "  Keycloak: $KEYCLOAK_API (realm rossoctl, client_id rossoctl, user $KEYCLOAK_USERNAME)"
+        echo "  Response: $A2A_TOKEN_RESPONSE"
+        echo "  Ensure Direct Access Grants are enabled for the rossoctl client"
+        echo "  (deploy-agent.sh enables them) or set A2A_AUTH_TOKEN explicitly."
+        exit 1
+    fi
+    export A2A_AUTH_TOKEN
+    echo "✓ Obtained A2A bearer token"
+else
+    echo "Using A2A_AUTH_TOKEN from environment"
+fi
+
 # Set tool prefix when using MCP gateway (gateway namespaces tools with a prefix)
 if [ "$USE_MCP_GATEWAY" = "true" ]; then
     export EXGENTIC_MCP_TOOL_PREFIX="${EXGENTIC_MCP_TOOL_PREFIX:-exgentic_${BENCHMARK_NAME}_}"

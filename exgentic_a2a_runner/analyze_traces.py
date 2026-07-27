@@ -33,6 +33,7 @@ class TraceRecord:
     experiment_name: str = "default"
     start_time: str = ""
     evaluation_result: bool | None = None
+    status_message: str = ""
 
     # Timing from child spans (seconds)
     session_creation_s: float = 0.0
@@ -109,6 +110,7 @@ def parse_traces(data: dict) -> list[TraceRecord]:
         num_parallel = int(meta.get("num_parallel_tasks", 0))
         session_id = meta.get("session_id", "unknown")
         status = root.get("statusCode", "UNSET")
+        status_message = root.get("statusMessage", "")
         evaluation_result = meta.get("evaluation_result")
 
         # Model from the invoke_agent child span or root metadata
@@ -134,6 +136,7 @@ def parse_traces(data: dict) -> list[TraceRecord]:
             experiment_name=experiment_name,
             start_time=root.get("startTime", ""),
             evaluation_result=evaluation_result,
+            status_message=status_message,
         )
 
         # Extract timing from child spans — collect chat spans separately
@@ -190,9 +193,11 @@ def parse_traces(data: dict) -> list[TraceRecord]:
             record.llm_total_s += chat_latency
             record.llm_count += 1
             child_attrs = parse_attrs(chat_span)
-            token_count = child_attrs.get("llm", {}).get("token_count", {})
-            record.llm_input_tokens += int(token_count.get("prompt", 0) or 0)
-            record.llm_output_tokens += int(token_count.get("completion", 0) or 0)
+            # Token usage from the OpenTelemetry gen_ai semantic-convention keys
+            # (gen_ai.usage.input_tokens/output_tokens) that current tracers emit.
+            gen_ai_usage = child_attrs.get("gen_ai", {}).get("usage", {})
+            record.llm_input_tokens += int(gen_ai_usage.get("input_tokens", 0) or 0)
+            record.llm_output_tokens += int(gen_ai_usage.get("output_tokens", 0) or 0)
 
             # Classify as before or after initial observation
             is_after_obs = False
@@ -630,6 +635,14 @@ def print_experiment_comparison(records: list[TraceRecord]) -> None:
         count_row += f" | {len(exp_groups[exp]):>{col_w}d}"
     print(count_row)
 
+    err_row = f"{'Error Rate (%)':<35s}"
+    for exp in experiments:
+        traces = exp_groups[exp]
+        n = len(traces)
+        rate = sum(1 for t in traces if t.status == "ERROR") / n * 100 if n else 0
+        err_row += f" | {rate:>{col_w}.1f}"
+    print(err_row)
+
     eval_row = f"{'Eval Success Rate (%)':<35s}"
     for exp in experiments:
         traces = exp_groups[exp]
@@ -685,6 +698,51 @@ def print_experiment_comparison(records: list[TraceRecord]) -> None:
         print_metric_row("A2A Network TX (MB)", lambda t: t.a2a_network_tx_mb if t.has_infra else 0, ".3f")
 
     print()
+
+    # --- Error breakdown by type (verbatim root statusMessage) ---
+    # Count each ERROR-status root span under its statusMessage, per experiment.
+    # ERROR traces with no message are grouped under "(no message)".
+    A2A_PREFIX = "A2A task ended in state 'failed':"
+
+    def error_label(t: TraceRecord) -> str:
+        msg = (t.status_message or "").splitlines()[0].strip() if t.status_message else ""
+        if msg.startswith(A2A_PREFIX):
+            msg = msg[len(A2A_PREFIX):].strip()
+        if not msg:
+            return "(no message)"
+        return msg if len(msg) <= 100 else msg[:97] + "..."
+
+    # error type -> {experiment -> count}
+    err_counts: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    for r in records:
+        if r.status == "ERROR":
+            err_counts[error_label(r)][r.experiment_name] += 1
+
+    print("=" * 140)
+    print("Error Breakdown by Type")
+    print("=" * 140)
+    print()
+
+    if not err_counts:
+        print("No errors in any experiment.")
+        print()
+    else:
+        err_header = f"{'Error Type':<100s}"
+        for exp in experiments:
+            err_header += f" | {exp:>{col_w}s}"
+        print(err_header)
+        print("-" * len(err_header))
+
+        # Sort error types by total count across experiments (most frequent first)
+        for err_type in sorted(err_counts, key=lambda e: -sum(err_counts[e].values())):
+            row = f"{err_type:<100s}"
+            for exp in experiments:
+                count = err_counts[err_type].get(exp, 0)
+                total = len(exp_groups[exp])
+                pct = (count / total * 100) if total else 0
+                row += f" | {f'{count} ({pct:.0f}%)':>{col_w}s}"
+            print(row)
+        print()
 
 
 def main() -> int:
