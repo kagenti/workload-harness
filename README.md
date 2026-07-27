@@ -69,7 +69,7 @@ The runner currently drives three benchmarks via the Exgentic MCP server. Each i
 | Benchmark | What it tests | Tool surface | Notes |
 |-----------|---------------|--------------|-------|
 | `gsm8k` | Grade-school math word problems — single-turn arithmetic reasoning. | Minimal — primarily LLM reasoning, light tool use. | Cheap and fast; good smoke test. The deploy script sets `EXGENTIC_SET_BENCHMARK_RUNNER=direct` for this benchmark. |
-| `tau2` | Multi-turn customer-support conversations against a simulated user. Measures whether the agent can complete realistic task flows over several turns. | Domain tools (retail, airline, telecom) plus a user-simulator LLM. | Deploy passes `EXGENTIC_SET_BENCHMARK_USER_SIMULATOR_MODEL` so the simulator runs on the same model as the agent. The IBAC plugin also lands its canonical attack-shape tests against tau-style multi-turn traffic — see [`ibac-benchmarking.md`](exgentic_a2a_runner/ibac-benchmarking.md). |
+| `tau2` | Multi-turn customer-support conversations against a simulated user. Measures whether the agent can complete realistic task flows over several turns. | Domain tools (retail, airline, telecom) plus a user-simulator LLM. | Deploy passes `EXGENTIC_SET_BENCHMARK_USER_SIMULATOR_MODEL` so the simulator runs on the same model as the agent. The IBAC plugin also lands its canonical attack-shape tests against tau-style multi-turn traffic. |
 | `appworld` | Long-horizon, tool-heavy tasks across a simulated app ecosystem (calendar, email, contacts, etc.). Stresses tool selection and planning. | Very wide — hundreds of tools across the simulated apps. | OpenAI models can't handle this tool surface without shortlisting; use `gemini-2.5-pro` or another model with strong tool selection. |
 
 ### Picking a model
@@ -303,8 +303,6 @@ IBAC (Intent-Based Access Control) is an outbound plugin that compares
 each agent action against the user's most-recent declared intent and
 asks an LLM judge to deny requests that don't align — catching
 prompt-injection-driven exfiltration that traditional auth gates miss.
-See [`ibac-benchmarking.md`](exgentic_a2a_runner/ibac-benchmarking.md) for the full
-benchmarking profile.
 
 **Prerequisites:**
 
@@ -376,8 +374,7 @@ blocking on outbound calls:
 When IBAC blocks a request, the agent sees a `403 ibac.blocked` from
 the proxy and the `ibac.evaluate` span on that outbound call carries
 `verdict=deny`, `reason=blocked`, and the (truncated) intent and
-action description. See `ibac-benchmarking.md` for the full set of
-metrics IBAC emits.
+action description.
 
 ### Other compositions
 
