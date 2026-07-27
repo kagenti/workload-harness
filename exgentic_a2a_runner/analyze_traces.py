@@ -632,6 +632,14 @@ def print_experiment_comparison(records: list[TraceRecord]) -> None:
         count_row += f" | {len(exp_groups[exp]):>{col_w}d}"
     print(count_row)
 
+    err_row = f"{'Error Rate (%)':<35s}"
+    for exp in experiments:
+        traces = exp_groups[exp]
+        n = len(traces)
+        rate = sum(1 for t in traces if t.status == "ERROR") / n * 100 if n else 0
+        err_row += f" | {rate:>{col_w}.1f}"
+    print(err_row)
+
     eval_row = f"{'Eval Success Rate (%)':<35s}"
     for exp in experiments:
         traces = exp_groups[exp]
