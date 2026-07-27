@@ -16,6 +16,24 @@ from .config import A2AConfig
 logger = logging.getLogger(__name__)
 
 
+class A2ATaskError(RuntimeError):
+    """Raised when the A2A task terminates in a failure state.
+
+    The A2A agent can report an execution failure (e.g. "LLM produced
+    unparseable output") by ending the task in a ``failed``/``rejected``/
+    ``canceled`` state while still returning descriptive text. That text is a
+    normal response, not an exception, so without this the runner would treat
+    the session as successful. Raising here lets the runner's failure path mark
+    the Agent.Call / Agent.Session spans as ERROR.
+    """
+
+    def __init__(self, state: str, message: str):
+        self.state = state
+        self.agent_message = message
+        detail = message.strip() or "<no message>"
+        super().__init__(f"A2A task ended in state '{state}': {detail}")
+
+
 class A2AProxyClient:
     """Client for A2A protocol communication using the standard a2a-sdk."""
 
@@ -78,7 +96,7 @@ class A2AProxyClient:
         import httpx
         from a2a.client import ClientConfig, ClientFactory, create_text_message_object
         from a2a.client.card_resolver import A2ACardResolver
-        from a2a.types import Role, TextPart
+        from a2a.types import Role, TaskState, TextPart
 
         # Restore the OTEL context from the calling thread so that
         # httpx instrumentation creates spans under the correct parent.
@@ -145,6 +163,11 @@ class A2AProxyClient:
             result_text = ""
             task_id = None
             event_count = 0
+            # Track the task's terminal state. The agent signals an execution
+            # failure by ending the task in a non-completed state while still
+            # emitting descriptive text, so we must inspect the state rather
+            # than assume any returned text means success.
+            final_state: Optional[TaskState] = None
 
             request_metadata = {"session_id": session_id} if session_id else None
             async for response in client.send_message(message, request_metadata=request_metadata):
@@ -155,6 +178,11 @@ class A2AProxyClient:
                     if task_id is None:
                         task_id = task.id
                         logger.debug(f"Task ID: {task_id}")
+
+                    # Latest known task state wins; the terminal event carries
+                    # the final state (completed / failed / rejected / ...).
+                    if task.status and task.status.state:
+                        final_state = task.status.state
 
                     # Extract text from artifact events
                     if event and hasattr(event, "artifact") and event.artifact:
@@ -169,8 +197,17 @@ class A2AProxyClient:
                                 result_text += part.root.text
 
             logger.debug(
-                f"Completed: {event_count} events, {len(result_text)} chars"
+                f"Completed: {event_count} events, {len(result_text)} chars, "
+                f"final state: {final_state}"
             )
+
+            # A task that ended in a failure state is an Agent.Call error even
+            # though it returned text. Raise so the runner marks the spans ERROR.
+            # completed/working/submitted/input-required/unknown are not treated
+            # as errors here (a wrong-but-valid answer stays a successful call).
+            if final_state in (TaskState.failed, TaskState.rejected, TaskState.canceled):
+                raise A2ATaskError(final_state.value, result_text)
+
             return result_text
 
         finally:

@@ -88,10 +88,21 @@ case "$PLUGIN_PRESET" in
         ;;
 esac
 
+# A short random id keeps experiment names unique across repeated invocations
+# with the same parameters (5 lowercase-alphanumeric chars).
+#
+# Read a fixed, bounded chunk from /dev/urandom BEFORE filtering: piping the
+# unbounded stream straight into `head -c 5` makes `head` close the pipe early,
+# which sends SIGPIPE to `tr` and — under `set -o pipefail` + `set -e` — kills
+# the whole script intermittently. `head` on the source bounds the read so no
+# writer is left with a closed pipe.
+EXPERIMENT_ID="$(LC_ALL=C tr -dc 'a-z0-9' < <(head -c 256 /dev/urandom) | cut -c1-5)"
+
 # Experiment names derived from the params. The plugin run is suffixed with the
 # preset name (e.g. "-ibac" for ibac-only) to keep names meaningful per preset.
+# The random id is appended so both runs in a comparison share the same id.
 PRESET_SUFFIX="${PLUGIN_PRESET%-only}"
-EXPERIMENT_BASE="${BENCHMARK}-${MAX_TASKS}-parallel-${MAX_PARALLEL_SESSIONS}"
+EXPERIMENT_BASE="${BENCHMARK}-${MAX_TASKS}-parallel-${MAX_PARALLEL_SESSIONS}-${EXPERIMENT_ID}"
 EXPERIMENT_PLUGIN="${EXPERIMENT_BASE}-${PRESET_SUFFIX}"
 
 # Judge configuration (from the template environment).
@@ -105,6 +116,7 @@ echo "Agent:                  $AGENT"
 echo "Max tasks:              $MAX_TASKS"
 echo "Max parallel sessions:  $MAX_PARALLEL_SESSIONS"
 echo "Plugin preset:          $PLUGIN_PRESET"
+echo "Experiment id:          $EXPERIMENT_ID"
 echo "Plugin experiment:      $EXPERIMENT_PLUGIN"
 echo "Baseline experiment:    $EXPERIMENT_BASE"
 echo "=========================================="

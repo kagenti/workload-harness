@@ -190,9 +190,11 @@ def parse_traces(data: dict) -> list[TraceRecord]:
             record.llm_total_s += chat_latency
             record.llm_count += 1
             child_attrs = parse_attrs(chat_span)
-            token_count = child_attrs.get("llm", {}).get("token_count", {})
-            record.llm_input_tokens += int(token_count.get("prompt", 0) or 0)
-            record.llm_output_tokens += int(token_count.get("completion", 0) or 0)
+            # Token usage from the OpenTelemetry gen_ai semantic-convention keys
+            # (gen_ai.usage.input_tokens/output_tokens) that current tracers emit.
+            gen_ai_usage = child_attrs.get("gen_ai", {}).get("usage", {})
+            record.llm_input_tokens += int(gen_ai_usage.get("input_tokens", 0) or 0)
+            record.llm_output_tokens += int(gen_ai_usage.get("output_tokens", 0) or 0)
 
             # Classify as before or after initial observation
             is_after_obs = False
