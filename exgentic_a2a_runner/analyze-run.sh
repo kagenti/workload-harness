@@ -27,10 +27,23 @@ WINDOW="${WINDOW:-3h}"
 MLFLOW_NAMESPACE="${MLFLOW_NAMESPACE:-}"
 MLFLOW_SERVICE="${MLFLOW_SERVICE:-}"
 MLFLOW_REMOTE_PORT="${MLFLOW_REMOTE_PORT:-}"
-MLFLOW_LOCAL_PORT="${MLFLOW_LOCAL_PORT:-8080}"
+# Local port for the MLflow port-forward. Must NOT be 8080: the kind ingress
+# serves keycloak.localtest.me (and other *.localtest.me hosts) on 8080, and
+# keycloak.localtest.me resolves to 127.0.0.1 — so binding the port-forward to
+# localhost:8080 would shadow Keycloak, and the secret-mode token request (a
+# password grant against Keycloak) would hit MLflow instead.
+MLFLOW_LOCAL_PORT="${MLFLOW_LOCAL_PORT:-8085}"
 MLFLOW_TLS="${MLFLOW_TLS:-}"
 MLFLOW_WORKSPACE="${MLFLOW_WORKSPACE:-}"
 AUTH_MODE="${AUTH_MODE:-}"
+# secret-mode (kind) auth: a password grant against the mlflow Keycloak client as
+# an MLflow user. MLflow's mlflow-oidc-auth authorizes reads from its own user DB
+# (where "admin" is seeded as a global admin), NOT from the token's Keycloak group
+# claim — so the user must be one MLflow knows. Defaults to admin; override with
+# MLFLOW_USER. The password defaults to the rossoctl-test-user secret in the
+# keycloak namespace (which holds admin's password); override with KEYCLOAK_PASSWORD.
+MLFLOW_USER="${MLFLOW_USER:-admin}"
+KEYCLOAK_PASSWORD="${KEYCLOAK_PASSWORD:-}"
 KUBECTL_BIN="${KUBECTL_BIN:-kubectl}"
 # `whoami -t` is an OpenShift (oc) extension, not a kubectl subcommand, so the
 # token command is separate from KUBECTL_BIN. Override with OC_BIN if needed.
@@ -92,6 +105,10 @@ Examples:
 EOF
     exit 1
 }
+
+# Capture the original invocation so the auth-failure hint can print the exact
+# command to re-run (the arg loop below consumes "$@" via shift).
+ORIGINAL_INVOCATION=("$0" "$@")
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -238,6 +255,14 @@ source "$SCRIPT_DIR/libsh/check-kubectl-context.sh"
 check_kubectl_context
 echo ""
 
+# urls.sh provides keycloak_api_url (CLUSTER_MODE must be exported, done above);
+# keycloak-direct-access.sh provides enable_direct_access_grants. Both are used
+# by the secret-mode token flow (password grant against the mlflow client).
+# shellcheck source=libsh/urls.sh
+source "$SCRIPT_DIR/libsh/urls.sh"
+# shellcheck source=libsh/keycloak-direct-access.sh
+source "$SCRIPT_DIR/libsh/keycloak-direct-access.sh"
+
 # --- Helper functions ---
 
 OAUTH_TOKEN=""
@@ -277,10 +302,21 @@ cleanup_port_forward() {
     fi
 }
 
-# secret mode: rossoctl's client-credentials flow. Reads mlflow-oauth-secret and
-# execs into the MLflow pod to exchange it for an access token.
+# secret mode: password (direct-access) grant against the mlflow Keycloak client.
+#
+# Why not client_credentials (the previous approach): that mints a token for the
+# mlflow *service account*, which mlflow-oidc-auth does not grant experiment reads
+# to, so the traces API returns 403. mlflow-oidc-auth authorizes from its own user
+# DB, where "admin" is seeded as a global admin — so we obtain a token for a real
+# MLflow user (default: admin) instead. The mlflow client already carries a groups
+# protocol mapper and is the confidential client MLflow trusts.
+#
+# The client id/secret come from mlflow-oauth-secret; the user password defaults to
+# the rossoctl-test-user secret (admin's password). The token endpoint is built from
+# keycloak_api_url (the OIDC_TOKEN_URL in the secret points at the in-cluster
+# Keycloak service, which is not reachable from the laptop).
 get_token_from_secret() {
-    echo "Obtaining OAuth token via mlflow-oauth-secret..."
+    echo "Obtaining OAuth token via password grant against the mlflow client..."
 
     # Note: under `set -e`, a failing command substitution aborts the script
     # before the following `if` can run. Capture status explicitly so the
@@ -293,36 +329,43 @@ get_token_from_secret() {
         return 1
     fi
 
-    local client_id client_secret token_url
+    local client_id client_secret
     client_id=$(echo "$secret_json" | jq -r '.data["OIDC_CLIENT_ID"]' | base64 -d) || true
     client_secret=$(echo "$secret_json" | jq -r '.data["OIDC_CLIENT_SECRET"]' | base64 -d) || true
-    token_url=$(echo "$secret_json" | jq -r '.data["OIDC_TOKEN_URL"]' | base64 -d) || true
-
-    if [ -z "$client_id" ] || [ -z "$client_secret" ] || [ -z "$token_url" ]; then
-        echo "Error: Could not extract OAuth credentials from secret"
+    if [ -z "$client_id" ] || [ -z "$client_secret" ]; then
+        echo "Error: Could not extract OIDC client id/secret from mlflow-oauth-secret"
         return 1
     fi
 
-    local mlflow_pod
-    mlflow_pod=$("$KUBECTL_BIN" get pod -n "$MLFLOW_NAMESPACE" -l app=mlflow -o jsonpath='{.items[0].metadata.name}' 2>/dev/null) || true
-    if [ -z "$mlflow_pod" ]; then
-        echo "Error: Could not find MLflow pod"
+    # Resolve the MLflow user's password: explicit KEYCLOAK_PASSWORD wins, else the
+    # rossoctl-test-user secret (holds admin's password) in the keycloak namespace.
+    local user_password="$KEYCLOAK_PASSWORD"
+    if [ -z "$user_password" ]; then
+        user_password=$("$KUBECTL_BIN" get secret rossoctl-test-user -n keycloak \
+            -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)
+    fi
+    if [ -z "$user_password" ]; then
+        echo "Error: Could not resolve a password for MLflow user '$MLFLOW_USER'"
+        echo "Hint: set KEYCLOAK_PASSWORD, or confirm the rossoctl-test-user secret exists in the keycloak namespace"
         return 1
     fi
 
+    # The mlflow client needs Direct Access Grants enabled for the password grant.
+    local KEYCLOAK_API
+    KEYCLOAK_API="$(keycloak_api_url)"
+    export KEYCLOAK_API
+    enable_direct_access_grants "$client_id"
+
+    local token_url="$KEYCLOAK_API/realms/rossoctl/protocol/openid-connect/token"
+    echo "Requesting token for user '$MLFLOW_USER' (client '$client_id')..."
     local token_response
-    token_response=$("$KUBECTL_BIN" exec -n "$MLFLOW_NAMESPACE" "$mlflow_pod" -- \
-        python3 -c "
-import urllib.request, urllib.parse, json
-data = urllib.parse.urlencode({
-    'grant_type': 'client_credentials',
-    'client_id': '${client_id}',
-    'client_secret': '${client_secret}'
-}).encode()
-req = urllib.request.Request('${token_url}', data=data, headers={'Content-Type': 'application/x-www-form-urlencoded'})
-resp = urllib.request.urlopen(req)
-print(resp.read().decode())
-" 2>/dev/null) || true
+    token_response=$(curl -s -X POST "$token_url" \
+        -H "Content-Type: application/x-www-form-urlencoded" \
+        -d "grant_type=password" \
+        -d "client_id=${client_id}" \
+        -d "client_secret=${client_secret}" \
+        -d "username=${MLFLOW_USER}" \
+        -d "password=${user_password}" 2>/dev/null) || true
 
     OAUTH_TOKEN=$(echo "$token_response" | jq -r '.access_token' 2>/dev/null) || true
     if [ -z "$OAUTH_TOKEN" ] || [ "$OAUTH_TOKEN" = "null" ]; then
@@ -425,4 +468,25 @@ if [ -n "$COMPARE_EXPERIMENTS" ]; then
     PYTHON_ARGS="--compare"
 fi
 
+# download_mlflow_traces.py exits 75 when MLflow rejects the token (a valid
+# token still gets 403 until the user has logged into the MLflow UI once, which
+# is what populates mlflow-oidc-auth's permission DB). Capture the downloader's
+# status via PIPESTATUS so we can print an actionable hint instead of a raw
+# HTTP 403 traceback.
+set +e
 python3 "$SCRIPT_DIR/download_mlflow_traces.py" | python3 "$SCRIPT_DIR/analyze_traces.py" $PYTHON_ARGS
+DOWNLOAD_STATUS=${PIPESTATUS[0]}
+set -e
+
+if [ "$DOWNLOAD_STATUS" -eq 75 ]; then
+    echo ""
+    echo "MLflow authentication succeeded but access was denied."
+    echo "Log into the MLflow UI once (this registers your user with MLflow's"
+    echo "permission system), then re-run the analysis:"
+    echo ""
+    printf '    '; printf '%q ' "${ORIGINAL_INVOCATION[@]}"; echo
+    echo ""
+    exit 75
+fi
+
+exit "$DOWNLOAD_STATUS"
