@@ -56,6 +56,8 @@ EXPERIMENT_FILTER=""
 COMPARE_EXPERIMENTS=""
 CLUSTER_MODE=""
 INGRESS_DOMAIN=""
+# Directory to save the raw downloaded traces JSON into. Empty = don't save.
+SAVE_TRACES_DIR="${SAVE_TRACES_DIR:-}"
 
 usage() {
     cat << EOF
@@ -75,6 +77,7 @@ Options:
     --mlflow-tls               MLflow serves HTTPS on the forwarded port
     --mlflow-workspace NAME    Send x-mlflow-workspace header
     --auth-mode MODE           Token source: secret (rossoctl oauth secret) or oc-token (oc whoami -t)
+    --save-traces DIR          Save the raw downloaded traces JSON into DIR (created if needed)
     -h, --help                 Show this help message
 
 The MLflow location, TLS, workspace, auth mode, and experiment id all DEFAULT
@@ -102,6 +105,7 @@ Examples:
     $0 --openshift apps.mycluster.example.com
     $0 --openshift apps.mycluster.example.com --experiment-id 3 --compare baseline,test1
     $0 -u http://mlflow.localtest.me:8080 --window 2d
+    $0 --window 6h --save-traces ./traces
 EOF
     exit 1
 }
@@ -123,6 +127,7 @@ while [[ $# -gt 0 ]]; do
         --mlflow-tls)       MLFLOW_TLS="true"; shift ;;
         --mlflow-workspace) MLFLOW_WORKSPACE="$2"; shift 2 ;;
         --auth-mode)        AUTH_MODE="$2"; shift 2 ;;
+        --save-traces|-save-traces) SAVE_TRACES_DIR="$2"; shift 2 ;;
         --kind)             CLUSTER_MODE="kind"; shift ;;
         --openshift)
             CLUSTER_MODE="openshift"
@@ -224,6 +229,15 @@ if ! WINDOW_MS=$(parse_window_ms "$WINDOW"); then
     exit 1
 fi
 
+# If --save-traces was given, make sure the target directory exists (create it
+# if needed) so the downloader's output can be written there.
+if [ -n "$SAVE_TRACES_DIR" ]; then
+    if ! mkdir -p "$SAVE_TRACES_DIR" 2>/dev/null; then
+        echo "Error: could not create traces directory '$SAVE_TRACES_DIR'"
+        exit 1
+    fi
+fi
+
 echo "=== MLflow Trace Analysis ==="
 echo "Cluster mode: $CLUSTER_MODE"
 if [ "$USE_PORT_FORWARD" = "true" ]; then
@@ -242,6 +256,9 @@ if [ -n "$EXPERIMENT_FILTER" ]; then
 fi
 if [ -n "$COMPARE_EXPERIMENTS" ]; then
     echo "Comparing Experiments: $COMPARE_EXPERIMENTS"
+fi
+if [ -n "$SAVE_TRACES_DIR" ]; then
+    echo "Saving traces to: $SAVE_TRACES_DIR"
 fi
 echo ""
 
@@ -474,9 +491,25 @@ fi
 # status via PIPESTATUS so we can print an actionable hint instead of a raw
 # HTTP 403 traceback.
 set +e
-python3 "$SCRIPT_DIR/download_mlflow_traces.py" | python3 "$SCRIPT_DIR/analyze_traces.py" $PYTHON_ARGS
-DOWNLOAD_STATUS=${PIPESTATUS[0]}
+if [ -n "$SAVE_TRACES_DIR" ]; then
+    # tee the downloader's stdout (the raw traces JSON) into a timestamped file
+    # in SAVE_TRACES_DIR before it is piped to the analyzer, so both the saved
+    # copy and the analysis come from the same download.
+    SAVE_TRACES_FILE="$SAVE_TRACES_DIR/traces-$(date +%Y%m%d-%H%M%S).json"
+    python3 "$SCRIPT_DIR/download_mlflow_traces.py" \
+        | tee "$SAVE_TRACES_FILE" \
+        | python3 "$SCRIPT_DIR/analyze_traces.py" $PYTHON_ARGS
+    DOWNLOAD_STATUS=${PIPESTATUS[0]}
+else
+    python3 "$SCRIPT_DIR/download_mlflow_traces.py" | python3 "$SCRIPT_DIR/analyze_traces.py" $PYTHON_ARGS
+    DOWNLOAD_STATUS=${PIPESTATUS[0]}
+fi
 set -e
+
+if [ -n "$SAVE_TRACES_DIR" ] && [ "$DOWNLOAD_STATUS" -eq 0 ]; then
+    echo ""
+    echo "✓ Saved traces to $SAVE_TRACES_FILE"
+fi
 
 if [ "$DOWNLOAD_STATUS" -eq 75 ]; then
     echo ""
