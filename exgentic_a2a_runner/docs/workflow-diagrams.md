@@ -92,10 +92,11 @@ flowchart TD
 ## 2. `deploy-benchmark.sh` — deploy the benchmark MCP tool
 
 Authenticates to Keycloak (auto-fetching / enabling Direct Access Grants),
-deletes any existing tool (waiting for async cleanup), fetches + parses the
-benchmark `.env` through the Rossoctl `parse-env` API, augments it with runtime
-vars, then `POST`s a tool spec to the Rossoctl API. Polls the MCP `initialize`
-endpoint until ready. Optionally registers the tool with the MCP Gateway.
+deletes any existing tool (waiting for async cleanup), reads the vendored
+benchmark `.env` and parses it through the Rossoctl `parse-env` API, augments
+it with runtime vars, then `POST`s a tool spec to the Rossoctl API. Polls the
+MCP `initialize` endpoint until ready. Optionally registers the tool with the
+MCP Gateway.
 
 ### 2.1 Interaction diagram
 
@@ -105,7 +106,7 @@ sequenceDiagram
     participant Bench as deploy-benchmark.sh
     participant KC as Keycloak
     participant KAG as Rossoctl API
-    participant GH as GitHub (raw .env)
+    participant FS as vendored env/
     participant K8s as kubectl / cluster
     participant MCP as MCP tool pod
 
@@ -129,8 +130,8 @@ sequenceDiagram
         end
     end
 
-    Bench->>GH: GET .env.<benchmark>
-    GH-->>Bench: env content (abort if 404)
+    Bench->>FS: read env/mcp/exgentic_benchmarks/.env.<benchmark>
+    FS-->>Bench: env content (abort if missing)
     Bench->>KAG: POST /api/v1/agents/parse-env {content}
     KAG-->>Bench: envVars JSON
     Bench->>Bench: jq-append OPENAI_API_BASE, tau user-sim model,<br/>gsm8k runner=direct
@@ -162,7 +163,7 @@ sequenceDiagram
 flowchart LR
     B[deploy-benchmark.sh] -->|auth| KC[(Keycloak)]
     B -->|deploy/delete tool<br/>parse-env| KAG[(Rossoctl API)]
-    B -->|fetch .env.benchmark| GH[(GitHub raw)]
+    B -->|read .env.benchmark| FS[(vendored env/)]
     B -->|patch / resources / gateway CRs| KUBE[(kubectl → cluster)]
     KAG -->|creates Deployment + Service + HTTPRoute| MCP["exgentic-mcp-&lt;bench&gt; pod<br/>team1 ns"]
     B -->|health: POST /mcp initialize| MCP
@@ -188,7 +189,7 @@ sequenceDiagram
     participant Agent as deploy-agent.sh
     participant KC as Keycloak
     participant KAG as Rossoctl API
-    participant GH as GitHub (raw .env)
+    participant FS as vendored env/
     participant PY as authbridge resolver (python3)
     participant K8s as kubectl / cluster
     participant AG as Agent pod
@@ -208,8 +209,8 @@ sequenceDiagram
         end
     end
 
-    Agent->>GH: GET .env (generic vs exgentic URL)
-    GH-->>Agent: env content
+    Agent->>FS: read env/a2a/exgentic_agent/.env.example
+    FS-->>Agent: env content (abort if missing)
     Agent->>KAG: POST /api/v1/agents/parse-env
     KAG-->>Agent: envVars JSON
     Agent->>Agent: jq-append MCP_URL(S), LLM_API_BASE/MODEL,<br/>EXGENTIC_OTEL_*, DEFAULT_RUNNER=thread,<br/>tool-shortlisting (tool_calling), LITELLM_LOCAL...
@@ -251,7 +252,7 @@ sequenceDiagram
 flowchart LR
     A[deploy-agent.sh] -->|auth| KC[(Keycloak)]
     A -->|deploy/delete agent<br/>parse-env| KAG[(Rossoctl API)]
-    A -->|fetch .env| GH[(GitHub raw)]
+    A -->|read .env| FS[(vendored env/)]
     A -->|resolve pipeline| PY[authbridge resolver.py]
     A -->|build/patch/secrets/resources| KUBE[(kubectl → cluster)]
     A -->|overlay| AP[authbridge/apply-pipeline.sh]

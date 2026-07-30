@@ -476,18 +476,18 @@ fi
 
 echo ""
 
-# Step 6: Fetch and parse environment variables
-echo "Step 6: Fetching environment variables..."
+# Step 6: Load and parse environment variables
+echo "Step 6: Loading environment variables..."
 
-ENV_FILE_URL="https://raw.githubusercontent.com/yoavkatz/agent-examples/refs/heads/feature/exgentic-mcp-server/a2a/exgentic_agent/.env.example"
+AGENT_ENV_FILE="${SCRIPT_DIR}/env/a2a/exgentic_agent/.env.example"
 
-ENV_CONTENT=$(curl -s "$ENV_FILE_URL")
-
-if [ -z "$ENV_CONTENT" ] || echo "$ENV_CONTENT" | grep -q "404: Not Found"; then
-    echo "Error: Could not fetch env file"
-    echo "Expected file: $ENV_FILE_URL"
+if [ ! -f "$AGENT_ENV_FILE" ]; then
+    echo "Error: Vendored agent env file not found" >&2
+    echo "  Expected: $AGENT_ENV_FILE" >&2
     exit 1
 fi
+
+ENV_CONTENT=$(cat "$AGENT_ENV_FILE")
 
 # Parse env vars using the Rossoctl API
 ENV_PARSE_RESPONSE=$(curl -s --max-time 10 -X POST "$ROSSOCTL_API/api/v1/agents/parse-env" \

@@ -386,18 +386,21 @@ fi
 
 echo ""
 
-# Step 8: Fetch and parse benchmark environment variables
-echo "Step 8: Fetching and preparing benchmark environment variables..."
-ENV_CONTENT=$(curl -s "https://raw.githubusercontent.com/yoavkatz/agent-examples/refs/heads/feature/exgentic-mcp-server/mcp/exgentic_benchmarks/.env.${BENCHMARK_NAME}")
+# Step 8: Load and parse benchmark environment variables
+echo "Step 8: Loading and preparing benchmark environment variables..."
+ENV_FILE="${SCRIPT_DIR_BENCH}/env/mcp/exgentic_benchmarks/.env.${BENCHMARK_NAME}"
 
 # Benchmark env vars are required: a missing .env file or an unparseable
 # parse-env response must abort the deploy, not silently continue with none.
-if [ -z "$ENV_CONTENT" ] || echo "$ENV_CONTENT" | grep -q "404: Not Found"; then
-    echo "Error: Could not fetch .env.${BENCHMARK_NAME} file" >&2
-    echo "  URL: https://raw.githubusercontent.com/yoavkatz/agent-examples/refs/heads/feature/exgentic-mcp-server/mcp/exgentic_benchmarks/.env.${BENCHMARK_NAME}" >&2
-    echo "  The benchmark environment file is required for deployment." >&2
+if [ ! -f "$ENV_FILE" ]; then
+    echo "Error: Vendored env file not found for benchmark '${BENCHMARK_NAME}'" >&2
+    echo "  Expected: $ENV_FILE" >&2
+    echo "  Available benchmarks:" >&2
+    ls -1 "${SCRIPT_DIR_BENCH}/env/mcp/exgentic_benchmarks/" 2>/dev/null | sed 's/^\.env\./    /' >&2
     exit 1
 fi
+
+ENV_CONTENT=$(cat "$ENV_FILE")
 
 # Parse env vars using the Rossoctl API
 ENV_PARSE_RESPONSE=$(curl -s -X POST "$ROSSOCTL_API/api/v1/agents/parse-env" \
