@@ -18,7 +18,7 @@ jobs:
       pull-requests: write
       contents: read
 
-    # Pinned to @main intentionally: org-internal workflows propagate updates automatically.
-    uses: kagenti/.github/.github/workflows/add-to-project.yml@main
+    # SHA-pinned to a specific rossoctl/.github commit (not @main) for supply-chain safety.
+    uses: rossoctl/.github/.github/workflows/add-to-project.yml@2610c7817f0acb847f83038fe7c4718112cf94d8 # 2026-07-20
     secrets: inherit
 
