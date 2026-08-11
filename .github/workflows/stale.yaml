@@ -18,4 +18,4 @@ permissions:
 
 jobs:
   stale:
-    uses: kagenti/.github/.github/workflows/stale.yaml@main
+    uses: rossoctl/.github/.github/workflows/stale.yaml@89bd5f961c3a91253d4bb54de69faff47397abcd # 2026-07-21
