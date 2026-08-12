@@ -127,7 +127,7 @@ while [[ $# -gt 0 ]]; do
         --mlflow-tls)       MLFLOW_TLS="true"; shift ;;
         --mlflow-workspace) MLFLOW_WORKSPACE="$2"; shift 2 ;;
         --auth-mode)        AUTH_MODE="$2"; shift 2 ;;
-        --save-traces|-save-traces) SAVE_TRACES_DIR="$2"; shift 2 ;;
+        --save-traces)      SAVE_TRACES_DIR="$2"; shift 2 ;;
         --kind)             CLUSTER_MODE="kind"; shift ;;
         --openshift)
             CLUSTER_MODE="openshift"

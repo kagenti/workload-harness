@@ -68,13 +68,32 @@ enable_direct_access_grants() {
         exit 1
     fi
 
-    # Enable direct access grants (the password grant).
+    # Enable direct access grants (the password grant). Keycloak treats
+    # PUT /clients/{id} as a full-replace of the client representation, so we
+    # fetch the current representation and merge the one flag into it rather
+    # than sending a bare {"directAccessGrantsEnabled": true} body (which would
+    # reset every field not included).
+    if ! command -v jq >/dev/null 2>&1; then
+        echo "Error: jq is required to merge the ${target_client} client representation" >&2
+        exit 1
+    fi
+
+    local current_client put_body
+    current_client=$(curl -s "$KEYCLOAK_API/admin/realms/rossoctl/clients/$client_id" \
+        -H "Authorization: Bearer $admin_token" 2>/dev/null)
+    put_body=$(echo "$current_client" | jq -c '.directAccessGrantsEnabled = true' 2>/dev/null)
+    if [ -z "$put_body" ] || [ "$put_body" = "null" ]; then
+        echo "Error: Could not fetch/merge ${target_client} client representation from Keycloak" >&2
+        echo "  Response: $current_client" >&2
+        exit 1
+    fi
+
     local put_code
     put_code=$(curl -s -o /tmp/kc_put_response.txt -w "%{http_code}" \
         -X PUT "$KEYCLOAK_API/admin/realms/rossoctl/clients/$client_id" \
         -H "Authorization: Bearer $admin_token" \
         -H "Content-Type: application/json" \
-        -d '{"directAccessGrantsEnabled": true}' 2>/dev/null) || put_code="000"
+        -d "$put_body" 2>/dev/null) || put_code="000"
     if [ "$put_code" != "204" ] && [ "$put_code" != "200" ]; then
         echo "Error: Failed to enable direct access grants for ${target_client} client (HTTP $put_code)" >&2
         echo "  Response: $(cat /tmp/kc_put_response.txt 2>/dev/null)" >&2
