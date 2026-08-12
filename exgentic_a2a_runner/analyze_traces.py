@@ -757,7 +757,11 @@ def main() -> int:
         with open(args.file) as f:
             raw = json.load(f)
     else:
-        raw = json.load(sys.stdin)
+        stdin_data = sys.stdin.read()
+        if not stdin_data.strip():
+            print("Error: no input received (upstream trace download likely failed)", file=sys.stderr)
+            return 1
+        raw = json.loads(stdin_data)
 
     records = parse_traces(raw)
 
