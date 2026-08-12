@@ -2,7 +2,7 @@
 
 ## Overview
 
-Create a test harness called `exgentic_a2a_runner` that integrates Exgentic benchmarks with Kagenti agents using the A2A protocol. This harness will follow the execution model defined in [GitHub Issue #963](https://github.com/kagenti/kagenti/issues/963).
+Create a test harness called `exgentic_a2a_runner` that integrates Exgentic benchmarks with Kagenti agents using the A2A protocol. This harness will follow the execution model defined in [GitHub Issue #963](https://github.com/rossoctl/rossoctl/issues/963).
 
 ## Architecture
 

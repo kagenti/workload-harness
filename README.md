@@ -16,7 +16,7 @@ The harness exists to robustly exercise agents and validate that the Kagenti pla
 
 ## Getting Started
 
-The minimal end-to-end path: stand up a Kagenti cluster, build the agent + MCP images, then deploy and evaluate. Each block here is self-contained — copy the commands you need.
+The minimal end-to-end path: stand up a Kagenti cluster, then deploy and evaluate. Agent and MCP images are pulled from GHCR by default — no local build required. Each block here is self-contained — copy the commands you need.
 
 ```bash
 # 1. Stand up the Kagenti cluster (one-time)
@@ -64,7 +64,7 @@ The runner follows this execution model for each benchmark session:
 
 ## Benchmarks
 
-The runner currently drives three benchmarks via the Exgentic MCP server. Each is a separate MCP image (`./build.sh <name>` from `agent-examples/mcp/exgentic_benchmarks`) and is selected at deploy time with `--benchmark <name>`.
+The runner currently drives three benchmarks via the Exgentic MCP server. Each is a separate MCP image, pulled from `ghcr.io/exgentic/exgentic-mcp-<benchmark>:latest`, and is selected at deploy time with `--benchmark <name>`.
 
 | Benchmark | What it tests | Tool surface | Notes |
 |-----------|---------------|--------------|-------|

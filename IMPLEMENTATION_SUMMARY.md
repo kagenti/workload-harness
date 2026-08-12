@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-The `exgentic_a2a_runner` is a test harness that integrates Exgentic benchmarks with Kagenti agents using the A2A protocol. It follows the execution model defined in [GitHub Issue #963](https://github.com/kagenti/kagenti/issues/963).
+The `exgentic_a2a_runner` is a test harness that integrates Exgentic benchmarks with Kagenti agents using the A2A protocol. It follows the execution model defined in [GitHub Issue #963](https://github.com/rossoctl/rossoctl/issues/963).
 
 ## What We're Building
 
