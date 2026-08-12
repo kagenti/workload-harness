@@ -46,8 +46,14 @@ enable_direct_access_grants() {
     admin_token=$(echo "$admin_token_response" | grep -o '"access_token":"[^"]*"' | sed 's/"access_token":"\([^"]*\)"/\1/')
     if [ -z "$admin_token" ]; then
         echo "Error: Could not obtain master-realm admin token from Keycloak" >&2
-        echo "  Response: $admin_token_response" >&2
-        echo "  Set KEYCLOAK_ADMIN_PASSWORD in your .env if the master realm admin password is not 'admin'." >&2
+        if [ -z "$admin_token_response" ]; then
+            # Empty response => curl could not reach the admin API (network/URL problem),
+            # not a rejected credential.
+            echo "  Keycloak returned no response — is it reachable at $KEYCLOAK_API ?" >&2
+        else
+            echo "  Response: $admin_token_response" >&2
+            echo "  Set KEYCLOAK_ADMIN_PASSWORD in your .env if the master realm admin password is not 'admin'." >&2
+        fi
         exit 1
     fi
 

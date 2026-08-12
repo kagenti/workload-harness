@@ -203,7 +203,7 @@ run_step env IBAC_JUDGE_ENDPOINT="$OPENAI_API_BASE" \
         ${DRY_FLAG[@]+"${DRY_FLAG[@]}"}
 
 # Compare the two runs.
-run_step "$SCRIPT_DIR/analyze-run.sh" -c "${EXPERIMENT_PLUGIN},${EXPERIMENT_BASE}"
+run_step "$SCRIPT_DIR/analyze-run.sh" -c "${EXPERIMENT_PLUGIN},${EXPERIMENT_BASE}" ${CLUSTER_FLAG[@]+"${CLUSTER_FLAG[@]}"}
 
 if [ "$DRY_RUN" = "true" ]; then
     echo "=========================================="
