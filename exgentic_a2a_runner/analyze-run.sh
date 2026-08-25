@@ -513,7 +513,7 @@ fi
 
 if [ "$DOWNLOAD_STATUS" -eq 75 ]; then
     echo ""
-    echo "MLflow authentication succeeded but access was denied."
+    echo "WARNING: MLflow authentication succeeded but access was denied."
     echo "Log into the MLflow UI once (this registers your user with MLflow's"
     echo "permission system), then re-run the analysis:"
     echo ""
