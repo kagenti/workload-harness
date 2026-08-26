@@ -62,6 +62,8 @@ The runner follows this execution model for each benchmark session:
 4. **Close Session**: `mcp_server.close_session(session_id)`
 5. **Record Statistics**: Track completion time, success rate, compute costs, tokens.
 
+For sequence and architecture diagrams of the deploy/evaluate scripts and the Python harness, see [Workflow Diagrams](exgentic_a2a_runner/docs/workflow-diagrams.md).
+
 ## Benchmarks
 
 The runner currently drives three benchmarks via the Exgentic MCP server. Each is a separate MCP image, pulled from `ghcr.io/exgentic/exgentic-mcp-<benchmark>:latest`, and is selected at deploy time with `--benchmark <name>`.
